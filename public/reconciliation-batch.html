@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>对账详情</title>
+    <style>
+      :root {
+        --bg: #f5f7fb;
+        --card: #ffffff;
+        --line: #e6ebf5;
+        --text: #1f2a44;
+        --muted: #6a7891;
+        --primary: #1677ff;
+        --success: #52c41a;
+        --warn: #faad14;
+        --danger: #ff4d4f;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+        background: linear-gradient(180deg, #f8fbff 0%, var(--bg) 100%);
+        color: var(--text);
+      }
+
+      .page {
+        max-width: 1440px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 20px;
+      }
+
+      .title {
+        font-size: 28px;
+        font-weight: 700;
+        margin: 0 0 8px;
+      }
+
+      .sub {
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .button {
+        border: 0;
+        border-radius: 10px;
+        padding: 10px 16px;
+        background: var(--primary);
+        color: #fff;
+        cursor: pointer;
+      }
+
+      .button.secondary {
+        background: #edf3ff;
+        color: var(--primary);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 18px;
+        box-shadow: 0 10px 30px rgba(31, 42, 68, 0.05);
+      }
+
+      .metric-label {
+        color: var(--muted);
+        font-size: 13px;
+        margin-bottom: 6px;
+      }
+
+      .metric-value {
+        font-size: 28px;
+        font-weight: 700;
+      }
+
+      .panel-title {
+        margin: 0 0 12px;
+        font-size: 18px;
+      }
+
+      .desc {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px 16px;
+      }
+
+      .desc-item {
+        background: #fafcff;
+        border-radius: 12px;
+        padding: 12px 14px;
+      }
+
+      .desc-key {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+
+      .toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+
+      .select {
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        min-width: 180px;
+        background: #fff;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #fff;
+      }
+
+      th,
+      td {
+        text-align: left;
+        padding: 12px 10px;
+        border-bottom: 1px solid var(--line);
+        font-size: 14px;
+        vertical-align: top;
+      }
+
+      th {
+        color: var(--muted);
+        font-weight: 600;
+        background: #fafcff;
+      }
+
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        background: #eef4ff;
+        color: var(--primary);
+      }
+
+      .empty,
+      .error,
+      .loading {
+        padding: 32px 20px;
+        text-align: center;
+        color: var(--muted);
+      }
+
+      .error {
+        color: var(--danger);
+      }
+
+      @media (max-width: 960px) {
+        .grid,
+        .desc {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .page {
+          padding: 16px;
+        }
+
+        .header,
+        .toolbar {
+          flex-direction: column;
+          align-items: stretch;
+        }
+
+        .grid,
+        .desc {
+          grid-template-columns: 1fr;
+        }
+
+        .table-wrap {
+          overflow-x: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <div class="header">
+        <div>
+          <h1 class="title">对账详情</h1>
+          <div id="subtitle" class="sub">正在加载批次信息...</div>
+        </div>
+        <div style="display: flex; gap: 8px">
+          <button class="button secondary" onclick="history.back()">返回</button>
+          <button class="button secondary" onclick="location.href='/reconciliation.html'">批次列表</button>
+          <button class="button" onclick="location.href='/'">回到首页</button>
+        </div>
+      </div>
+
+      <div id="summary" class="grid"></div>
+
+      <div class="card" style="margin-bottom: 16px">
+        <h2 class="panel-title">批次信息</h2>
+        <div id="batch-info" class="desc"></div>
+      </div>
+
+      <div class="card">
+        <div class="toolbar">
+          <h2 class="panel-title" style="margin: 0">对账明细</h2>
+          <select id="resultType" class="select">
+            <option value="">全部结果</option>
+            <option value="MATCH">匹配</option>
+            <option value="ROLLING">滚动匹配</option>
+            <option value="LONG">长款</option>
+            <option value="SHORT">短款</option>
+            <option value="AMOUNT_MISMATCH">金额差异</option>
+          </select>
+        </div>
+        <div id="details" class="table-wrap"></div>
+      </div>
+    </div>
+
+    <script>
+      const params = new URLSearchParams(window.location.search);
+      const batchId = params.get('batch_id');
+      const subtitle = document.getElementById('subtitle');
+      const summary = document.getElementById('summary');
+      const batchInfo = document.getElementById('batch-info');
+      const details = document.getElementById('details');
+      const resultType = document.getElementById('resultType');
+
+      function renderMetrics(batch) {
+        const items = [
+          ['总记录数', batch.record_count ?? 0],
+          ['匹配', batch.match_count ?? 0],
+          ['长款', batch.long_count ?? 0],
+          ['短款', batch.short_count ?? 0],
+          ['滚动匹配', batch.rolling_count ?? 0],
+          ['金额差异', batch.amount_diff_count ?? 0],
+          ['总金额', batch.total_amount ?? '0'],
+          ['状态', batch.status ?? '-'],
+        ];
+
+        summary.innerHTML = items
+          .map(
+            ([label, value]) => `
+              <div class="card">
+                <div class="metric-label">${label}</div>
+                <div class="metric-value">${value}</div>
+              </div>
+            `,
+          )
+          .join('');
+      }
+
+      function renderBatchInfo(batch) {
+        const items = [
+          ['批次号', batch.batch_no],
+          ['对账类型', batch.batch_type],
+          ['对账日期', batch.check_date || '-'],
+          ['业务文件 ID', batch.business_file_id || '-'],
+          ['渠道文件 ID', batch.channel_file_id || '-'],
+          ['开始时间', batch.started_at || '-'],
+          ['完成时间', batch.finished_at || '-'],
+          ['错误信息', batch.error_msg || '-'],
+        ];
+
+        batchInfo.innerHTML = items
+          .map(
+            ([label, value]) => `
+              <div class="desc-item">
+                <span class="desc-key">${label}</span>
+                <strong>${value ?? '-'}</strong>
+              </div>
+            `,
+          )
+          .join('');
+      }
+
+      function renderDetails(list) {
+        if (!list.length) {
+          details.innerHTML = '<div class="empty">当前筛选条件下没有明细。</div>';
+          return;
+        }
+
+        details.innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>流水号</th>
+                <th>结果类型</th>
+                <th>业务金额</th>
+                <th>渠道金额</th>
+                <th>差异金额</th>
+                <th>匹配日期</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${list
+                .map(
+                  (item) => `
+                    <tr>
+                      <td>${item.serial_no || '-'}</td>
+                      <td><span class="tag">${item.result_type || '-'}</span></td>
+                      <td>${item.business_amount ?? '-'}</td>
+                      <td>${item.channel_amount ?? '-'}</td>
+                      <td>${item.diff_amount ?? '-'}</td>
+                      <td>${item.match_date ?? '-'}</td>
+                    </tr>
+                  `,
+                )
+                .join('')}
+            </tbody>
+          </table>
+        `;
+      }
+
+      async function request(path) {
+        const response = await fetch(`/api/v1${path}`, {
+          headers: { Accept: 'application/json' },
+        });
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text || `HTTP ${response.status}`);
+        }
+
+        return response.json();
+      }
+
+      async function loadBatch() {
+        if (!batchId) {
+          subtitle.textContent = '缺少 batch_id 参数';
+          summary.innerHTML = '<div class="error">无法查看对账详情：缺少 batch_id。</div>';
+          return;
+        }
+
+        try {
+          const batchResp = await request(`/reconciliation/batches/${batchId}`);
+          const batch = batchResp.data;
+          subtitle.textContent = `批次 ${batch.batch_no} 的统计与明细`;
+          renderMetrics(batch);
+          renderBatchInfo(batch);
+        } catch (error) {
+          subtitle.textContent = '批次加载失败';
+          summary.innerHTML = `<div class="error">${error.message}</div>`;
+        }
+      }
+
+      async function loadDetails() {
+        if (!batchId) return;
+
+        details.innerHTML = '<div class="loading">正在加载对账明细...</div>';
+
+        try {
+          const filter = resultType.value
+            ? `?result_type=${encodeURIComponent(resultType.value)}&page=1&pageSize=100`
+            : '?page=1&pageSize=100';
+          const detailResp = await request(`/reconciliation/batches/${batchId}/details${filter}`);
+          renderDetails(detailResp.data || []);
+        } catch (error) {
+          details.innerHTML = `<div class="error">${error.message}</div>`;
+        }
+      }
+
+      resultType.addEventListener('change', loadDetails);
+      loadBatch();
+      loadDetails();
+    </script>
+  </body>
+</html>

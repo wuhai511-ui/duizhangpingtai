@@ -1,25 +1,30 @@
-import api from './api';
-import type { ApiResponse } from '../types';
+﻿import api from './api';
+import type {
+  ApiResponse,
+  FileInfo,
+  FileUploadResult,
+  PaginatedResponse,
+  UploadFileType,
+} from '../types';
 
-export interface FileUploadResult {
-  file_id: string;
-  records: number;
-  type: string;
-}
-
-export interface FileInfo {
-  id: string;
-  filename: string;
-  type: string;
-  status: string;
-  records: number;
-  created_at: string;
+function normalizeFileInfo(file: Record<string, unknown>): FileInfo {
+  return {
+    id: String(file.id || ''),
+    filename: String(file.filename || ''),
+    type: String(file.type || ''),
+    records: Number(file.records || 0),
+    status: String(file.status || 'processed'),
+    createdAt: String(file.createdAt || file.created_at || ''),
+  };
 }
 
 export const fileApi = {
-  upload: async (file: File): Promise<FileUploadResult> => {
+  upload: async (file: File, fileType?: UploadFileType): Promise<FileUploadResult> => {
     const formData = new FormData();
     formData.append('file', file);
+    if (fileType) {
+      formData.append('file_type', fileType);
+    }
 
     const response = await api.post<ApiResponse<FileUploadResult>>('/files/upload', formData, {
       headers: {
@@ -30,18 +35,39 @@ export const fileApi = {
     return response.data.data;
   },
 
-  list: async (params?: { page?: number; pageSize?: number; fileType?: string }): Promise<FileInfo[]> => {
-    const response = await api.get<ApiResponse<FileInfo[]>>('/files', { params });
-    return response.data.data;
+  list: async (params?: {
+    page?: number;
+    pageSize?: number;
+    fileType?: string;
+  }): Promise<PaginatedResponse<FileInfo>> => {
+    const response = await api.get<ApiResponse<Record<string, unknown>[]>>('/files', { params });
+    return {
+      list: (response.data.data || []).map(normalizeFileInfo),
+      pagination: response.data.pagination || {
+        page: params?.page || 1,
+        pageSize: params?.pageSize || 20,
+        total: (response.data.data || []).length,
+      },
+    };
   },
 
   get: async (id: string): Promise<FileInfo> => {
-    const response = await api.get<ApiResponse<FileInfo>>(`/files/${id}`);
-    return response.data.data;
+    const response = await api.get<ApiResponse<Record<string, unknown>>>(`/files/${id}`);
+    return normalizeFileInfo(response.data.data);
   },
 
-  getRecords: async (id: string, params?: { page?: number; pageSize?: number }) => {
+  getRecords: async (
+    id: string,
+    params?: { page?: number; pageSize?: number },
+  ): Promise<PaginatedResponse<unknown>> => {
     const response = await api.get<ApiResponse<unknown[]>>(`/files/${id}/records`, { params });
-    return response.data.data;
+    return {
+      list: response.data.data || [],
+      pagination: response.data.pagination || {
+        page: params?.page || 1,
+        pageSize: params?.pageSize || 20,
+        total: (response.data.data || []).length,
+      },
+    };
   },
 };

@@ -1,0 +1,16 @@
+﻿export const BUSINESS_ORDER_FIELD_LABELS: Record<string, string> = {
+  order_no: '订单号',
+  order_type: '订单类型',
+  pay_method: '支付方式',
+  channel_name: '渠道名称',
+  customer_phone: '客户手机号',
+  customer_name: '客户姓名',
+  order_amount: '订单金额',
+  received_amount: '实收金额',
+  paid_amount: '应付金额',
+  channel_fee: '渠道手续费',
+  order_status: '订单状态',
+  pay_serial_no: '支付流水号',
+  orig_serial_no: '原始流水号',
+  trans_date: '交易日期',
+};
