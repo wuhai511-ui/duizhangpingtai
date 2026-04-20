@@ -1,6 +1,7 @@
 ﻿import api from './api';
 import type {
   ApiResponse,
+  FileAnalyzeResult,
   FileInfo,
   FileUploadResult,
   PaginatedResponse,
@@ -69,5 +70,19 @@ export const fileApi = {
         total: (response.data.data || []).length,
       },
     };
+  },
+
+  analyze: async (file: File, typeHint?: UploadFileType): Promise<FileAnalyzeResult> => {
+    const ext = file.name.toLowerCase().split('.').pop();
+    const isExcel = ext === 'xlsx' || ext === 'xls';
+    const content = isExcel ? '' : await file.text();
+
+    const response = await api.post<ApiResponse<FileAnalyzeResult>>('/files/analyze', {
+      filename: file.name,
+      content,
+      type_hint: typeHint,
+    });
+
+    return response.data.data;
   },
 };

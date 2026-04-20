@@ -23,19 +23,21 @@ import {
   UploadOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import MappingReviewModal from '../../components/template-mapping/MappingReviewModal';
 import { aiApi } from '../../services/ai';
 import { fileApi } from '../../services/file';
-import MappingReviewModal from '../../components/template-mapping/MappingReviewModal';
 import type {
   AIConversation,
   AIConversationMessage,
   ConversationReconcileResult,
+  FileAnalyzeResult,
   FileUploadResult,
   SaveBusinessOrderTemplatePayload,
   TemplateAnalyzeResult,
   TemplateMappingConfig,
   UploadFileType,
 } from '../../types';
+import { detectSourceTemplate, SOURCE_TEMPLATES } from '../../utils/fileSource';
 
 const { TextArea } = Input;
 const { Paragraph, Text, Title } = Typography;
@@ -45,13 +47,53 @@ interface UploadedAttachment {
   filename: string;
   type: UploadFileType;
   records: number;
+  source_label?: string;
+  source_kind?: string;
+  detection_confidence?: number;
 }
 
+interface PendingFileInsight {
+  filename: string;
+  sourceLabel?: string;
+  sourceKind?: string;
+  confidence?: number;
+  detectedType?: string;
+  guessedType?: string;
+  headers?: string[];
+  matchedHeaders?: string[];
+}
+
+const ALLOWED_FILE_TYPES: UploadFileType[] = [
+  'JY',
+  'JS',
+  'SEP',
+  'JZ',
+  'ACC',
+  'DW',
+  'D0',
+  'JY_FQ',
+  'INVOICE',
+  'BUSINESS_ORDER',
+];
+
+const FILE_TYPE_LABELS: Record<UploadFileType, string> = {
+  BUSINESS_ORDER: '业务订单',
+  JY: '交易明细(JY)',
+  JS: '结算明细(JS)',
+  SEP: '代付明细(SEP)',
+  JZ: '记账文件(JZ)',
+  ACC: 'ACC',
+  DW: 'DW',
+  D0: 'D0',
+  JY_FQ: '交易分期(JY_FQ)',
+  INVOICE: '发票',
+};
+
 const FILE_TYPE_OPTIONS: Array<{ label: string; value: UploadFileType }> = [
-  { label: '业务订单', value: 'BUSINESS_ORDER' },
-  { label: '交易明细(JY)', value: 'JY' },
-  { label: '结算明细(JS)', value: 'JS' },
-  { label: '代付明细(SEP)', value: 'SEP' },
+  { label: FILE_TYPE_LABELS.BUSINESS_ORDER, value: 'BUSINESS_ORDER' },
+  { label: FILE_TYPE_LABELS.JY, value: 'JY' },
+  { label: FILE_TYPE_LABELS.JS, value: 'JS' },
+  { label: FILE_TYPE_LABELS.SEP, value: 'SEP' },
 ];
 
 const QUICK_QUESTIONS = [
@@ -61,9 +103,64 @@ const QUICK_QUESTIONS = [
   '本周交易趋势如何？',
 ];
 
+function getPendingFileKey(file: File): string {
+  return `${file.name}-${file.size}-${file.lastModified}`;
+}
+
+function toUploadedAttachment(item: {
+  id: string;
+  filename: string;
+  type: string;
+  records: number;
+  source_label?: string;
+  source_kind?: string;
+  detection_confidence?: number;
+}): UploadedAttachment | null {
+  const type = item.type as UploadFileType;
+  if (!ALLOWED_FILE_TYPES.includes(type)) {
+    return null;
+  }
+
+  const fallbackSource = detectSourceTemplate({
+    filename: item.filename,
+    fileType: type,
+  });
+
+  return {
+    file_id: item.id,
+    filename: item.filename,
+    type,
+    records: Number(item.records || 0),
+    source_label: item.source_label || fallbackSource?.label,
+    source_kind: item.source_kind || fallbackSource?.key,
+    detection_confidence:
+      typeof item.detection_confidence === 'number'
+        ? item.detection_confidence
+        : fallbackSource?.confidence,
+  };
+}
+
 function formatUploadSummary(items: UploadedAttachment[]): string {
   const total = items.reduce((sum, item) => sum + item.records, 0);
   return `上传完成，共 ${items.length} 个文件，合计 ${total} 条记录。`;
+}
+
+function formatFileOptionLabel(file: UploadedAttachment): string {
+  const sourceSuffix = file.source_label ? ` / ${file.source_label}` : '';
+  return `${file.filename} (${FILE_TYPE_LABELS[file.type] || file.type}${sourceSuffix} / ${file.records} 条)`;
+}
+
+function getFileTypeTagColor(type: UploadFileType): string {
+  if (type === 'BUSINESS_ORDER') {
+    return 'gold';
+  }
+  if (type === 'JY') {
+    return 'blue';
+  }
+  if (type === 'JS') {
+    return 'purple';
+  }
+  return 'default';
 }
 
 async function toBase64(file: File): Promise<string> {
@@ -93,25 +190,35 @@ function extractUploadedFiles(messages: AIConversationMessage[]): UploadedAttach
   const files: UploadedAttachment[] = [];
 
   messages.forEach((message) => {
-    if (message.message_type === 'file_notice' && Array.isArray(message.meta_json?.files)) {
-      message.meta_json.files.forEach((item) => {
-        if (
-          item &&
-          typeof item === 'object' &&
-          'file_id' in item &&
-          'filename' in item &&
-          'type' in item &&
-          'records' in item
-        ) {
-          files.push({
-            file_id: String(item.file_id),
-            filename: String(item.filename),
-            type: item.type as UploadFileType,
-            records: Number(item.records || 0),
-          });
-        }
-      });
+    if (message.message_type !== 'file_notice' || !Array.isArray(message.meta_json?.files)) {
+      return;
     }
+
+    message.meta_json.files.forEach((item) => {
+      if (
+        item &&
+        typeof item === 'object' &&
+        'file_id' in item &&
+        'filename' in item &&
+        'type' in item &&
+        'records' in item
+      ) {
+        const attachment = toUploadedAttachment({
+          id: String(item.file_id),
+          filename: String(item.filename),
+          type: String(item.type),
+          records: Number(item.records || 0),
+          source_label: 'source_label' in item ? String(item.source_label || '') : undefined,
+          source_kind: 'source_kind' in item ? String(item.source_kind || '') : undefined,
+          detection_confidence:
+            'detection_confidence' in item ? Number(item.detection_confidence || 0) : undefined,
+        });
+
+        if (attachment) {
+          files.push(attachment);
+        }
+      }
+    });
   });
 
   const byId = new Map(files.map((item) => [item.file_id, item]));
@@ -136,17 +243,44 @@ function getConversationPreview(messages: AIConversationMessage[]): string {
   return lastMessage.content.length > 28 ? `${lastMessage.content.slice(0, 28)}...` : lastMessage.content;
 }
 
+function toPendingInsight(file: File, analysis?: FileAnalyzeResult | null): PendingFileInsight {
+  const fallbackSource = detectSourceTemplate({
+    filename: file.name,
+    headers: analysis?.headers,
+    fileType: (analysis?.detected_type || analysis?.guessed_type || 'JY') as UploadFileType,
+  });
+  const detectedSource = analysis?.detected_source || fallbackSource;
+  const matchedHeaders = analysis?.detected_source
+    ? analysis.detected_source.matched_headers
+    : fallbackSource?.matchedHeaders;
+
+  return {
+    filename: file.name,
+    sourceLabel: detectedSource?.label,
+    sourceKind: detectedSource?.key,
+    confidence: detectedSource?.confidence,
+    detectedType: analysis?.detected_type,
+    guessedType: analysis?.guessed_type,
+    headers: analysis?.headers,
+    matchedHeaders,
+  };
+}
+
 const AIQuery: React.FC = () => {
   const [messageApi, contextHolder] = message.useMessage();
   const queryClient = useQueryClient();
+
   const [input, setInput] = useState('');
   const [uploadModalVisible, setUploadModalVisible] = useState(false);
   const [selectedFileType, setSelectedFileType] = useState<UploadFileType>('BUSINESS_ORDER');
   const [pendingFiles, setPendingFiles] = useState<UploadFile[]>([]);
+  const [pendingInsights, setPendingInsights] = useState<Record<string, PendingFileInsight>>({});
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [mappingModalVisible, setMappingModalVisible] = useState(false);
   const [templateAnalysis, setTemplateAnalysis] = useState<TemplateAnalyzeResult | null>(null);
   const [pendingBusinessFile, setPendingBusinessFile] = useState<File | null>(null);
+  const [selectedBusinessFileId, setSelectedBusinessFileId] = useState<string>();
+  const [selectedChannelFileId, setSelectedChannelFileId] = useState<string>();
 
   const conversationsQuery = useQuery({
     queryKey: ['ai-conversations'],
@@ -157,6 +291,27 @@ const AIQuery: React.FC = () => {
     queryKey: ['ai-conversation-messages', selectedConversationId],
     queryFn: () => aiApi.getConversationMessages(selectedConversationId as string),
     enabled: Boolean(selectedConversationId),
+  });
+
+  const legacyFilesQuery = useQuery({
+    queryKey: ['ai-legacy-files'],
+    queryFn: async () => {
+      const res = await fileApi.list({ page: 1, pageSize: 200 });
+      return res.list
+        .map((item) =>
+          toUploadedAttachment({
+            id: item.id,
+            filename: item.filename,
+            type: item.type,
+            records: item.records,
+            source_label: item.source_label,
+            source_kind: item.source_kind,
+            detection_confidence: item.detection_confidence,
+          }),
+        )
+        .filter(Boolean) as UploadedAttachment[];
+    },
+    enabled: selectedConversationId === 'legacy',
   });
 
   useEffect(() => {
@@ -174,10 +329,107 @@ const AIQuery: React.FC = () => {
     [conversationsQuery.data, selectedConversationId],
   );
 
-  const uploadedFiles = useMemo(
-    () => extractUploadedFiles(messagesQuery.data || []),
-    [messagesQuery.data],
+  const uploadedFiles = useMemo(() => {
+    const fromMessages = extractUploadedFiles(messagesQuery.data || []);
+    if (selectedConversationId !== 'legacy') {
+      return fromMessages;
+    }
+
+    const fromLegacyList = legacyFilesQuery.data || [];
+    const byId = new Map<string, UploadedAttachment>();
+    [...fromLegacyList, ...fromMessages].forEach((item) => {
+      byId.set(item.file_id, item);
+    });
+    return Array.from(byId.values());
+  }, [legacyFilesQuery.data, messagesQuery.data, selectedConversationId]);
+
+  const availableFiles = useMemo(
+    () => uploadedFiles.filter((item) => item.records > 0),
+    [uploadedFiles],
   );
+
+  const selectedBusinessFile = useMemo(
+    () => availableFiles.find((item) => item.file_id === selectedBusinessFileId),
+    [availableFiles, selectedBusinessFileId],
+  );
+
+  const selectedChannelFile = useMemo(
+    () => availableFiles.find((item) => item.file_id === selectedChannelFileId),
+    [availableFiles, selectedChannelFileId],
+  );
+
+  const selectableFileOptions = useMemo(
+    () =>
+      availableFiles.map((item) => ({
+        label: formatFileOptionLabel(item),
+        value: item.file_id,
+      })),
+    [availableFiles],
+  );
+
+  useEffect(() => {
+    if (
+      selectedBusinessFileId &&
+      availableFiles.some((item) => item.file_id === selectedBusinessFileId)
+    ) {
+      return;
+    }
+
+    const fallback = [...availableFiles]
+      .reverse()
+      .find((item) => item.type === 'BUSINESS_ORDER');
+    setSelectedBusinessFileId(fallback?.file_id);
+  }, [availableFiles, selectedBusinessFileId]);
+
+  useEffect(() => {
+    if (
+      selectedChannelFileId &&
+      availableFiles.some((item) => item.file_id === selectedChannelFileId)
+    ) {
+      return;
+    }
+
+    const fallback = [...availableFiles]
+      .reverse()
+      .find((item) => item.type === 'JY');
+    setSelectedChannelFileId(fallback?.file_id);
+  }, [availableFiles, selectedChannelFileId]);
+
+  useEffect(() => {
+    const files = pendingFiles.map((item) => item.originFileObj).filter(Boolean) as File[];
+
+    if (!uploadModalVisible || files.length === 0) {
+      setPendingInsights({});
+      return;
+    }
+
+    let cancelled = false;
+
+    const analyzeFiles = async () => {
+      const nextInsights: Record<string, PendingFileInsight> = {};
+
+      await Promise.all(
+        files.map(async (file) => {
+          try {
+            const analysis = await fileApi.analyze(file, selectedFileType);
+            nextInsights[getPendingFileKey(file)] = toPendingInsight(file, analysis);
+          } catch {
+            nextInsights[getPendingFileKey(file)] = toPendingInsight(file, null);
+          }
+        }),
+      );
+
+      if (!cancelled) {
+        setPendingInsights(nextInsights);
+      }
+    };
+
+    analyzeFiles();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingFiles, selectedFileType, uploadModalVisible]);
 
   const createConversationMutation = useMutation({
     mutationFn: (title?: string) => aiApi.createConversation(title ? { title } : {}),
@@ -192,18 +444,16 @@ const AIQuery: React.FC = () => {
 
   useEffect(() => {
     if (
-      !conversationsQuery.isLoading &&
-      conversationsQuery.data &&
-      conversationsQuery.data.length === 0 &&
-      !createConversationMutation.isPending
+      conversationsQuery.isLoading ||
+      !conversationsQuery.data ||
+      conversationsQuery.data.length > 0 ||
+      createConversationMutation.isPending
     ) {
-      createConversationMutation.mutate('');
+      return;
     }
-  }, [
-    conversationsQuery.data,
-    conversationsQuery.isLoading,
-    createConversationMutation,
-  ]);
+
+    createConversationMutation.mutate('');
+  }, [conversationsQuery.data, conversationsQuery.isLoading, createConversationMutation]);
 
   const sendMessageMutation = useMutation({
     mutationFn: async (question: string) => {
@@ -232,14 +482,25 @@ const AIQuery: React.FC = () => {
         content_base64: await toBase64(payload.file),
       });
     },
-    onSuccess: (data, variables) => {
+    onSuccess: async (data, variables) => {
+      const insight = pendingInsights[getPendingFileKey(variables.file)];
       const fileItem: UploadedAttachment = {
         file_id: data.file_id,
         filename: variables.file.name,
         type: 'BUSINESS_ORDER',
         records: data.records,
+        source_label: insight?.sourceLabel,
+        source_kind: insight?.sourceKind,
+        detection_confidence: insight?.confidence,
       };
-      if (selectedConversationId) {
+
+      if (data.records > 0) {
+        setSelectedBusinessFileId(data.file_id);
+      }
+
+      if (selectedConversationId === 'legacy') {
+        await queryClient.invalidateQueries({ queryKey: ['ai-legacy-files'] });
+      } else if (selectedConversationId) {
         aiApi
           .createFileNotice(selectedConversationId, { files: [fileItem] })
           .then(() =>
@@ -250,12 +511,14 @@ const AIQuery: React.FC = () => {
           )
           .catch((error) => messageApi.warning(`文件上下文保存失败：${(error as Error).message}`));
       }
+
       messageApi.success(`业务订单已按模板“${variables.templateName}”导入，生成 ${data.records} 条记录。`);
       setMappingModalVisible(false);
       setTemplateAnalysis(null);
       setPendingBusinessFile(null);
       setUploadModalVisible(false);
       setPendingFiles([]);
+      setPendingInsights({});
     },
     onError: (error) => {
       messageApi.error(`模板导入失败：${(error as Error).message}`);
@@ -324,19 +587,45 @@ const AIQuery: React.FC = () => {
   const uploadMutation = useMutation({
     mutationFn: async (payload: { files: File[]; fileType: UploadFileType }) => {
       const results: UploadedAttachment[] = [];
+
       for (const file of payload.files) {
         const result: FileUploadResult = await fileApi.upload(file, payload.fileType);
+        const insight = pendingInsights[getPendingFileKey(file)];
+
         results.push({
           file_id: result.file_id,
           filename: file.name,
           type: payload.fileType,
           records: result.records,
+          source_label: result.source_label || insight?.sourceLabel,
+          source_kind: result.source_kind || insight?.sourceKind,
+          detection_confidence:
+            typeof result.detection_confidence === 'number'
+              ? result.detection_confidence
+              : insight?.confidence,
         });
       }
+
       return results;
     },
-    onSuccess: (items) => {
-      if (selectedConversationId) {
+    onSuccess: async (items) => {
+      const latestBusiness = [...items]
+        .reverse()
+        .find((item) => item.type === 'BUSINESS_ORDER' && item.records > 0);
+      const latestChannel = [...items]
+        .reverse()
+        .find((item) => item.type !== 'BUSINESS_ORDER' && item.records > 0);
+
+      if (latestBusiness) {
+        setSelectedBusinessFileId(latestBusiness.file_id);
+      }
+      if (latestChannel) {
+        setSelectedChannelFileId(latestChannel.file_id);
+      }
+
+      if (selectedConversationId === 'legacy') {
+        await queryClient.invalidateQueries({ queryKey: ['ai-legacy-files'] });
+      } else if (selectedConversationId) {
         aiApi
           .createFileNotice(selectedConversationId, { files: items })
           .then(() =>
@@ -347,12 +636,14 @@ const AIQuery: React.FC = () => {
           )
           .catch((error) => messageApi.warning(`文件上下文保存失败：${(error as Error).message}`));
       }
+
       messageApi.success(formatUploadSummary(items));
       if (items.some((item) => item.records === 0)) {
         messageApi.warning('存在 0 条记录的文件，请检查文件类型或表头后重新上传。');
       }
       setUploadModalVisible(false);
       setPendingFiles([]);
+      setPendingInsights({});
     },
     onError: (error) => {
       messageApi.error(`上传失败：${(error as Error).message}`);
@@ -365,22 +656,29 @@ const AIQuery: React.FC = () => {
         throw new Error('请先选择会话');
       }
 
-      const businessFile = [...uploadedFiles].reverse().find((item) => item.type === 'BUSINESS_ORDER');
-      const jyFile = [...uploadedFiles].reverse().find((item) => item.type === 'JY');
+      const businessFile =
+        selectedBusinessFile ||
+        [...availableFiles].reverse().find((item) => item.type === 'BUSINESS_ORDER');
+      const channelFile =
+        selectedChannelFile ||
+        [...availableFiles].reverse().find((item) => item.type === 'JY');
 
-      if (!businessFile || !jyFile) {
-        throw new Error('请先上传业务订单和交易明细(JY)文件');
+      if (!businessFile || !channelFile) {
+        throw new Error('请先选择业务方文件和渠道方文件');
+      }
+      if (businessFile.file_id === channelFile.file_id) {
+        throw new Error('业务方文件和渠道方文件不能是同一个文件');
       }
       if (businessFile.records <= 0) {
-        throw new Error('业务订单文件暂无有效记录，请重新导入后再执行对账');
+        throw new Error('业务方文件没有有效记录，请重新上传或重新导入');
       }
-      if (jyFile.records <= 0) {
-        throw new Error('交易明细(JY)文件暂无有效记录，请检查文件内容后重新上传');
+      if (channelFile.records <= 0) {
+        throw new Error('渠道方文件没有有效记录，请检查内容后重新上传');
       }
 
       return aiApi.reconcileInConversation(selectedConversationId, {
         business_file_id: businessFile.file_id,
-        channel_file_id: jyFile.file_id,
+        channel_file_id: channelFile.file_id,
         batch_type: 'ORDER_VS_JY',
       });
     },
@@ -403,10 +701,10 @@ const AIQuery: React.FC = () => {
       saveTemplateMutation.isPending ||
       importWithTemplateMutation.isPending,
     [
-      uploadMutation.isPending,
       analyzeTemplateMutation.isPending,
-      saveTemplateMutation.isPending,
       importWithTemplateMutation.isPending,
+      saveTemplateMutation.isPending,
+      uploadMutation.isPending,
     ],
   );
 
@@ -428,7 +726,7 @@ const AIQuery: React.FC = () => {
 
     if (selectedFileType === 'BUSINESS_ORDER') {
       if (files.length !== 1) {
-        messageApi.warning('业务订单模板学习暂时只支持一次上传 1 个文件');
+        messageApi.warning('业务订单模板识别暂时只支持一次上传 1 个文件。');
         return;
       }
       analyzeTemplateMutation.mutate(files[0]);
@@ -455,9 +753,18 @@ const AIQuery: React.FC = () => {
     window.location.href = `/reconciliation-batch.html?batch_id=${encodeURIComponent(batchId)}`;
   };
 
+  const pendingInsightList = useMemo(() => {
+    const files = pendingFiles.map((item) => item.originFileObj).filter(Boolean) as File[];
+    return files.map((file) => ({
+      key: getPendingFileKey(file),
+      insight: pendingInsights[getPendingFileKey(file)],
+    }));
+  }, [pendingFiles, pendingInsights]);
+
   return (
     <div>
       {contextHolder}
+
       <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 16 }}>
         <Card
           title="历史会话"
@@ -476,8 +783,9 @@ const AIQuery: React.FC = () => {
             <Alert
               type="info"
               showIcon
-              message="会话已持久化到后端，可跨设备继续查看和聊天。"
+              message="会话已经持久化到后端，可以跨设备继续查看和聊天。"
             />
+
             <List
               loading={conversationsQuery.isLoading}
               dataSource={conversationsQuery.data || []}
@@ -489,6 +797,7 @@ const AIQuery: React.FC = () => {
                 const preview =
                   item.latest_message_preview ||
                   (selectedConversationId === item.id ? getConversationPreview(messagesForConversation) : '新会话');
+
                 return (
                   <List.Item
                     style={{
@@ -496,7 +805,8 @@ const AIQuery: React.FC = () => {
                       padding: 12,
                       borderRadius: 12,
                       background: selectedConversationId === item.id ? '#e6f4ff' : '#fafafa',
-                      border: selectedConversationId === item.id ? '1px solid #91caff' : '1px solid #f0f0f0',
+                      border:
+                        selectedConversationId === item.id ? '1px solid #91caff' : '1px solid #f0f0f0',
                     }}
                     onClick={() => setSelectedConversationId(item.id)}
                   >
@@ -547,7 +857,7 @@ const AIQuery: React.FC = () => {
             </Space>
           </Card>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 16 }}>
             <Card>
               <Space direction="vertical" style={{ width: '100%' }} size={16}>
                 <div>
@@ -556,70 +866,79 @@ const AIQuery: React.FC = () => {
                       ? buildConversationTitle(selectedConversation, messagesQuery.data || [])
                       : '加载会话中'}
                   </Title>
-                  <Text type="secondary">切换左侧会话后，可以继续在原上下文中提问和执行对账。</Text>
+                  <Text type="secondary">切换左侧会话后，可以继续在原上下文里提问和执行对账。</Text>
                 </div>
 
                 <List
                   loading={messagesQuery.isLoading}
                   dataSource={messagesQuery.data || []}
                   locale={{ emptyText: '可以直接提问，也可以先上传文件再执行对账。' }}
-                  renderItem={(item) => (
-                    <List.Item style={{ border: 'none' }}>
-                      <div
-                        style={{
-                          width: '100%',
-                          display: 'flex',
-                          justifyContent: item.role === 'user' ? 'flex-end' : 'flex-start',
-                        }}
-                      >
+                  renderItem={(item) => {
+                    const stats = item.meta_json?.stats as Record<string, unknown> | undefined;
+                    const files = Array.isArray(item.meta_json?.files)
+                      ? (item.meta_json?.files as Array<Record<string, unknown>>)
+                      : [];
+
+                    return (
+                      <List.Item style={{ border: 'none' }}>
                         <div
                           style={{
-                            maxWidth: '85%',
-                            background: item.role === 'user' ? '#e6f4ff' : '#f6ffed',
-                            borderRadius: 12,
-                            padding: 16,
+                            width: '100%',
+                            display: 'flex',
+                            justifyContent: item.role === 'user' ? 'flex-end' : 'flex-start',
                           }}
                         >
-                          <Space align="start">
-                            {item.role === 'assistant' ? <RobotOutlined /> : <Text strong>我</Text>}
-                            <div>
-                              <Paragraph style={{ marginBottom: item.sql_text ? 12 : 0 }}>{item.content}</Paragraph>
-                              {item.sql_text ? <Paragraph code>{item.sql_text}</Paragraph> : null}
-                              {item.message_type === 'reconcile_result' && item.meta_json ? (
-                                <Space direction="vertical" size={8}>
-                                  <Space wrap>
-                                    <Tag color="blue">批次号 {(item.meta_json.batch_no as string) || '-'}</Tag>
-                                    <Tag>总数 {(item.meta_json.stats as Record<string, unknown> | undefined)?.total as number}</Tag>
-                                    <Tag color="green">匹配 {(item.meta_json.stats as Record<string, unknown> | undefined)?.match as number}</Tag>
+                          <div
+                            style={{
+                              maxWidth: '85%',
+                              background: item.role === 'user' ? '#e6f4ff' : '#f6ffed',
+                              borderRadius: 12,
+                              padding: 16,
+                            }}
+                          >
+                            <Space align="start">
+                              {item.role === 'assistant' ? <RobotOutlined /> : <Text strong>我</Text>}
+                              <div>
+                                <Paragraph style={{ marginBottom: item.sql_text ? 12 : 0 }}>{item.content}</Paragraph>
+
+                                {item.sql_text ? <Paragraph code>{item.sql_text}</Paragraph> : null}
+
+                                {item.message_type === 'reconcile_result' && item.meta_json ? (
+                                  <Space direction="vertical" size={8}>
+                                    <Space wrap>
+                                      <Tag color="blue">批次号 {String(item.meta_json.batch_no || '-')}</Tag>
+                                      <Tag>总数 {Number(stats?.total || 0)}</Tag>
+                                      <Tag color="green">匹配 {Number(stats?.match || 0)}</Tag>
+                                    </Space>
+                                    <Button
+                                      type="link"
+                                      style={{ padding: 0 }}
+                                      onClick={() => openReconciliationDetail(String(item.meta_json?.batch_id || ''))}
+                                    >
+                                      查看对账详情
+                                    </Button>
                                   </Space>
-                                  <Button
-                                    type="link"
-                                    style={{ padding: 0 }}
-                                    onClick={() => openReconciliationDetail(String(item.meta_json?.batch_id || ''))}
-                                  >
-                                    查看对账详情
-                                  </Button>
-                                </Space>
-                              ) : null}
-                              {item.message_type === 'file_notice' && Array.isArray(item.meta_json?.files) ? (
-                                <Space direction="vertical" size={8}>
-                                  <Text type="secondary">当前会话已记录以下文件：</Text>
-                                  <Space wrap>
-                                    {item.meta_json.files.map((file, index) => (
-                                      <Tag key={`${String((file as { file_id?: string }).file_id || index)}`}>
-                                        {String((file as { filename?: string }).filename || '未知文件')} (
-                                        {Number((file as { records?: number }).records || 0)}条)
-                                      </Tag>
-                                    ))}
+                                ) : null}
+
+                                {item.message_type === 'file_notice' && files.length > 0 ? (
+                                  <Space direction="vertical" size={8}>
+                                    <Text type="secondary">当前会话已记录以下文件：</Text>
+                                    <Space wrap>
+                                      {files.map((file, index) => (
+                                        <Tag key={`${String(file.file_id || index)}`}>
+                                          {String(file.filename || '未知文件')} ({Number(file.records || 0)} 条)
+                                        </Tag>
+                                      ))}
+                                    </Space>
                                   </Space>
-                                </Space>
-                              ) : null}
-                            </div>
-                          </Space>
+                                ) : null}
+                              </div>
+                            </Space>
+                          </div>
                         </div>
-                      </div>
-                    </List.Item>
-                  )}
+                      </List.Item>
+                    );
+                  }}
                 />
 
                 {(sendMessageMutation.isPending || pendingUpload) && (
@@ -636,10 +955,11 @@ const AIQuery: React.FC = () => {
                     autoSize={{ minRows: 1, maxRows: 4 }}
                     disabled={!selectedConversation}
                     onPressEnter={(event) => {
-                      if (!event.shiftKey) {
-                        event.preventDefault();
-                        handleSend();
+                      if (event.shiftKey) {
+                        return;
                       }
+                      event.preventDefault();
+                      handleSend();
                     }}
                   />
                   <Button
@@ -656,27 +976,64 @@ const AIQuery: React.FC = () => {
             </Card>
 
             <Card title="当前会话文件状态">
-              <Space direction="vertical" style={{ width: '100%' }}>
+              <Space direction="vertical" style={{ width: '100%' }} size={12}>
                 <Alert
                   type="info"
                   showIcon
-                  message="推荐顺序：先上传业务订单，再上传 JY 交易明细，最后执行对账。"
+                  message="支持手动指定比对双方，同时会自动识别微信、拉卡拉、支付宝、美团、抖音、银行流水等来源标签。"
                 />
+
+                <div>
+                  <Text strong>业务方文件</Text>
+                  <Select
+                    style={{ width: '100%', marginTop: 8 }}
+                    placeholder="请选择业务方文件"
+                    value={selectedBusinessFileId}
+                    onChange={setSelectedBusinessFileId}
+                    options={selectableFileOptions}
+                    allowClear
+                  />
+                </div>
+
+                <div>
+                  <Text strong>渠道方文件</Text>
+                  <Select
+                    style={{ width: '100%', marginTop: 8 }}
+                    placeholder="请选择渠道方文件"
+                    value={selectedChannelFileId}
+                    onChange={setSelectedChannelFileId}
+                    options={selectableFileOptions}
+                    allowClear
+                  />
+                </div>
+
                 {uploadedFiles.length === 0 ? (
                   <Text type="secondary">当前会话还没有上传文件。</Text>
                 ) : (
-                  uploadedFiles.map((file) => (
-                    <Card key={file.file_id} size="small">
-                      <Space direction="vertical" size={4} style={{ width: '100%' }}>
-                        <Text strong>{file.filename}</Text>
-                        <Space wrap>
-                          <Tag color={file.type === 'BUSINESS_ORDER' ? 'gold' : 'blue'}>{file.type}</Tag>
-                          <Tag>{file.records} 条</Tag>
-                          <Tag color="green">{file.file_id}</Tag>
+                  uploadedFiles.map((file) => {
+                    const isBusinessSelected = selectedBusinessFileId === file.file_id;
+                    const isChannelSelected = selectedChannelFileId === file.file_id;
+
+                    return (
+                      <Card key={file.file_id} size="small">
+                        <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                          <Text strong>{file.filename}</Text>
+                          <Space wrap>
+                            <Tag color={getFileTypeTagColor(file.type)}>
+                              {FILE_TYPE_LABELS[file.type] || file.type}
+                            </Tag>
+                            {file.source_label ? <Tag color="cyan">{file.source_label}</Tag> : null}
+                            <Tag>{file.records} 条</Tag>
+                            {isBusinessSelected ? <Tag color="green">当前业务方</Tag> : null}
+                            {isChannelSelected ? <Tag color="blue">当前渠道方</Tag> : null}
+                          </Space>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            {file.file_id}
+                          </Text>
                         </Space>
-                      </Space>
-                    </Card>
-                  ))
+                      </Card>
+                    );
+                  })
                 )}
               </Space>
             </Card>
@@ -700,28 +1057,58 @@ const AIQuery: React.FC = () => {
             options={FILE_TYPE_OPTIONS}
             style={{ width: '100%' }}
           />
+
           <Upload
             multiple={selectedFileType !== 'BUSINESS_ORDER'}
             beforeUpload={() => false}
             fileList={pendingFiles}
             onChange={({ fileList }) => setPendingFiles(fileList)}
-            accept={selectedFileType === 'BUSINESS_ORDER' ? '.txt,.csv,.xlsx,.xls' : '.txt,.csv,.dat,.xlsx,.xls'}
+            accept={selectedFileType === 'BUSINESS_ORDER' ? '.txt,.csv,.xlsx,.xls' : '.txt,.csv,.tsv,.dat,.xlsx,.xls'}
           >
             <Button icon={<UploadOutlined />}>选择文件</Button>
           </Upload>
+
+          {pendingInsightList.length > 0 ? (
+            <Card size="small" title="自动识别结果">
+              <Space direction="vertical" style={{ width: '100%' }} size={12}>
+                {pendingInsightList.map(({ key, insight }) => (
+                  <div key={key}>
+                    <Text strong>{insight?.filename || key}</Text>
+                    <div style={{ marginTop: 8 }}>
+                      <Space wrap>
+                        {insight?.detectedType ? <Tag color="blue">检测类型 {insight.detectedType}</Tag> : null}
+                        {insight?.guessedType ? <Tag>文件猜测 {insight.guessedType}</Tag> : null}
+                        {insight?.sourceLabel ? <Tag color="cyan">{insight.sourceLabel}</Tag> : <Tag>来源待确认</Tag>}
+                        {typeof insight?.confidence === 'number' ? (
+                          <Tag>{Math.round(insight.confidence * 100)}%</Tag>
+                        ) : null}
+                      </Space>
+                    </div>
+                    {insight?.matchedHeaders?.length ? (
+                      <Text type="secondary" style={{ display: 'block', marginTop: 4 }}>
+                        命中字段：{insight.matchedHeaders.join('、')}
+                      </Text>
+                    ) : null}
+                  </div>
+                ))}
+              </Space>
+            </Card>
+          ) : null}
+
           <Alert
             type="warning"
             showIcon
             message={
               selectedFileType === 'BUSINESS_ORDER'
-                ? '业务订单会先做模板识别，未命中模板时会打开人工确认弹窗。'
-                : '渠道文件按选定类型直接上传。'
+                ? '业务订单会先做模板识别；若未命中模板，会弹出人工确认映射。'
+                : '渠道文件会先做来源识别，再按所选文件类型上传解析。'
             }
           />
+
           <Alert
             type="info"
             showIcon
-            message="上传成功后，文件会作为会话上下文写入历史消息，跨设备切换时也能恢复。"
+            message={`当前已支持来源标签：${SOURCE_TEMPLATES.map((item) => item.label).join('、')}`}
           />
         </Space>
       </Modal>

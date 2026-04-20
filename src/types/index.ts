@@ -114,6 +114,9 @@ export interface FileUploadResult {
   file_id: string;
   records: number;
   type: string;
+  source_label?: string;
+  source_kind?: string;
+  detection_confidence?: number;
 }
 
 export interface FileInfo {
@@ -123,6 +126,39 @@ export interface FileInfo {
   records: number;
   status: string;
   createdAt: string;
+  source_label?: string;
+  source_kind?: string;
+  detection_confidence?: number;
+}
+
+export interface FileSourceDetectionResult {
+  key: string;
+  label: string;
+  confidence: number;
+  matched_headers: string[];
+  filename_matched: boolean;
+}
+
+export interface FileAnalyzeResult {
+  filename: string;
+  guessed_type: string;
+  detected_type: string;
+  headers: string[];
+  delimiter: string | null;
+  confidence: number;
+  suggested_template: {
+    name: string;
+    type: string;
+    field_config: Record<string, unknown>;
+    delimiter: string | null;
+    header_row: number;
+    data_start_row: number;
+  };
+  unknown_fields: string[];
+  reasoning: string | string[] | null;
+  rows_preview: string[][];
+  detected_source?: FileSourceDetectionResult | null;
+  supported_sources?: Array<{ key: string; label: string }>;
 }
 
 export interface ReconcileRequest {

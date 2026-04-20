@@ -130,7 +130,17 @@ export const aiApi = {
 
   createFileNotice: async (
     conversationId: string,
-    payload: { files: Array<{ file_id: string; filename: string; type: string; records: number }> },
+    payload: {
+      files: Array<{
+        file_id: string;
+        filename: string;
+        type: string;
+        records: number;
+        source_label?: string;
+        source_kind?: string;
+        detection_confidence?: number;
+      }>;
+    },
   ): Promise<AIConversationMessage> => {
     if (conversationId === 'legacy') {
       return {
