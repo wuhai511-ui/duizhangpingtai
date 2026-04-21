@@ -11,6 +11,7 @@ import { merchantRoutes } from '../business/routes/merchant.js';
 import { transactionRoutes } from '../business/routes/transaction.js';
 import { aiRoutes, createAiFileRoutes, createAiReconcileRoutes } from '../business/routes/ai.js';
 import { aiReconConfigRoutes } from '../business/routes/ai-recon-config.js';
+import { createAiConversationRoutes } from '../business/routes/ai-conversations.js';
 
 import { createBffRoutes } from '../bff/routes/bff.routes.js';
 import { createAuthRoutes } from './routes/auth.js';
@@ -88,6 +89,7 @@ export async function createServer(): Promise<FastifyInstance> {
   await fastify.register(createAiFileRoutes(processor), { prefix });
   await fastify.register(createAiReconcileRoutes(prisma, engine), { prefix });
   await fastify.register(aiReconConfigRoutes, { prefix });
+  await fastify.register(createAiConversationRoutes(prisma), { prefix });
   await fastify.register(createBffRoutes(prisma), { prefix });
 
   return fastify;
