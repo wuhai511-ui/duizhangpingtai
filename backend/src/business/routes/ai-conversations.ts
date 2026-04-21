@@ -1,8 +1,3 @@
-/**
- * AI 会话管理 API
- * 支持多轮对话、文件上传、对账等
- */
-
 import type { FastifyPluginAsync } from 'fastify';
 import type { PrismaClient } from '@prisma/client';
 
@@ -10,6 +5,29 @@ interface ApiResponse<T = unknown> {
   code: number;
   message: string;
   data: T;
+}
+
+interface ConversationRecord {
+  id: string;
+  title: string;
+  merchant_id?: string | null;
+  created_by?: string | null;
+  latest_message_preview?: string | null;
+  latest_message_type?: string | null;
+  last_message_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ConversationMessage {
+  id: string;
+  conversation_id: string;
+  role: 'user' | 'assistant';
+  message_type: 'text' | 'sql_result' | 'file_notice' | 'reconcile_result';
+  content: string;
+  sql_text?: string | null;
+  meta_json?: Record<string, unknown> | null;
+  created_at: string;
 }
 
 function ok<T>(data: T): ApiResponse<T> {
@@ -20,206 +38,307 @@ function err(code: number, message: string): ApiResponse<null> {
   return { code, message, data: null };
 }
 
-// 内存存储（生产环境应使用数据库）
-const conversations = new Map<string, any>();
-const messages = new Map<string, any[]>();
+const conversations = new Map<string, ConversationRecord>();
+const messages = new Map<string, ConversationMessage[]>();
 
-export const createAiConversationRoutes = (prisma: PrismaClient): FastifyPluginAsync => {
+function getUserId(request: any): string {
+  return request.user?.id || 'anonymous';
+}
+
+function syncConversation(conversationId: string): ConversationRecord | undefined {
+  const conversation = conversations.get(conversationId);
+  if (!conversation) {
+    return undefined;
+  }
+
+  const conversationMessages = messages.get(conversationId) || [];
+  const lastMessage = conversationMessages[conversationMessages.length - 1];
+
+  if (lastMessage) {
+    conversation.updated_at = lastMessage.created_at;
+    conversation.last_message_at = lastMessage.created_at;
+    conversation.latest_message_preview =
+      lastMessage.content.length > 120
+        ? `${lastMessage.content.slice(0, 120)}...`
+        : lastMessage.content;
+    conversation.latest_message_type = lastMessage.message_type;
+  }
+
+  return conversation;
+}
+
+function appendMessages(conversationId: string, ...items: ConversationMessage[]) {
+  const current = messages.get(conversationId) || [];
+  current.push(...items);
+  messages.set(conversationId, current);
+  syncConversation(conversationId);
+}
+
+function buildMessage(params: {
+  conversationId: string;
+  role: 'user' | 'assistant';
+  messageType: ConversationMessage['message_type'];
+  content: string;
+  sqlText?: string | null;
+  metaJson?: Record<string, unknown> | null;
+}): ConversationMessage {
+  return {
+    id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+    conversation_id: params.conversationId,
+    role: params.role,
+    message_type: params.messageType,
+    content: params.content,
+    sql_text: params.sqlText ?? null,
+    meta_json: params.metaJson ?? null,
+    created_at: new Date().toISOString(),
+  };
+}
+
+function normalizeFiles(body: Record<string, unknown>): Array<Record<string, unknown>> {
+  if (Array.isArray(body.files)) {
+    return body.files.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object');
+  }
+
+  if (body.file_id || body.file_name || body.file_type) {
+    return [body];
+  }
+
+  return [];
+}
+
+function resolveNoticeContent(files: Array<Record<string, unknown>>): string {
+  if (files.length === 1) {
+    const file = files[0];
+    return `已记录上传文件：${String(file.filename || file.file_name || '未知文件')}`;
+  }
+  return `已记录上传文件，共 ${files.length} 个`;
+}
+
+export const createAiConversationRoutes = (_prisma: PrismaClient): FastifyPluginAsync => {
   return async (fastify) => {
-    /** GET /ai/conversations - 获取会话列表 */
     fastify.get('/ai/conversations', async (request) => {
-      const userId = (request as any).user?.id || 'anonymous';
+      const userId = getUserId(request);
       const list = Array.from(conversations.values())
-        .filter((c: any) => c.created_by === userId)
-        .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-      
+        .filter((item) => item.created_by === userId)
+        .map((item) => syncConversation(item.id) || item)
+        .sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime());
+
       return ok(list);
     });
 
-    /** POST /ai/conversations - 创建新会话 */
     fastify.post('/ai/conversations', async (request) => {
-      const body = request.body as { title?: string; merchant_id?: string };
-      const userId = (request as any).user?.id || 'anonymous';
-      
-      const conversation = {
-        id: `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        title: body.title || '新对话',
-        merchant_id: body.merchant_id,
+      const body = (request.body as Record<string, unknown> | undefined) || {};
+      const userId = getUserId(request);
+      const now = new Date().toISOString();
+      const conversation: ConversationRecord = {
+        id: `conv_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+        title: String(body.title || '新会话'),
+        merchant_id: body.merchant_id ? String(body.merchant_id) : null,
         created_by: userId,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        latest_message_preview: null,
+        latest_message_type: null,
+        last_message_at: now,
+        created_at: now,
+        updated_at: now,
       };
-      
+
       conversations.set(conversation.id, conversation);
       messages.set(conversation.id, []);
-      
+
       return ok(conversation);
     });
 
-    /** GET /ai/conversations/:id - 获取会话详情 */
     fastify.get('/ai/conversations/:id', async (request, reply) => {
-      const params = request.params as { id: string };
-      const conversation = conversations.get(params.id);
-      
+      const { id } = request.params as { id: string };
+      const conversation = syncConversation(id);
+
       if (!conversation) {
         reply.code(404);
         return err(404, 'Conversation not found');
       }
-      
+
       return ok(conversation);
     });
 
-    /** GET /ai/conversations/:id/messages - 获取会话消息 */
     fastify.get('/ai/conversations/:id/messages', async (request, reply) => {
-      const params = request.params as { id: string };
-      const conversation = conversations.get(params.id);
-      
+      const { id } = request.params as { id: string };
+      const conversation = conversations.get(id);
+
       if (!conversation) {
         reply.code(404);
         return err(404, 'Conversation not found');
       }
-      
-      const msgs = messages.get(params.id) || [];
-      return ok(msgs);
+
+      return ok(messages.get(id) || []);
     });
 
-    /** POST /ai/conversations/:id/messages - 发送消息 */
     fastify.post('/ai/conversations/:id/messages', async (request, reply) => {
-      const params = request.params as { id: string };
-      const body = request.body as { content: string; type?: string };
-      const conversation = conversations.get(params.id);
-      
+      const { id } = request.params as { id: string };
+      const body = (request.body as Record<string, unknown> | undefined) || {};
+      const conversation = conversations.get(id);
+
       if (!conversation) {
         reply.code(404);
         return err(404, 'Conversation not found');
       }
-      
-      if (!body.content) {
+
+      const question = String(body.question || body.content || '').trim();
+      if (!question) {
         reply.code(400);
-        return err(400, 'Content is required');
+        return err(400, 'question is required');
       }
-      
-      const userMessage = {
-        id: `msg_${Date.now()}_user`,
-        conversation_id: params.id,
+
+      const userMessage = buildMessage({
+        conversationId: id,
         role: 'user',
-        content: body.content,
-        type: body.type || 'text',
-        created_at: new Date().toISOString(),
+        messageType: 'text',
+        content: question,
+      });
+
+      const aiPayload = {
+        question,
+        merchantId: body.merchantId || conversation.merchant_id || undefined,
       };
-      
-      const msgs = messages.get(params.id) || [];
-      msgs.push(userMessage);
-      
-      // 模拟 AI 回复
-      const aiReply = {
-        id: `msg_${Date.now()}_assistant`,
-        conversation_id: params.id,
+      const aiResponse = await fastify.inject({
+        method: 'POST',
+        url: '/api/v1/ai/query',
+        payload: aiPayload,
+      });
+
+      if (aiResponse.statusCode >= 400) {
+        reply.code(aiResponse.statusCode);
+        return aiResponse.json();
+      }
+
+      const aiBody = aiResponse.json() as ApiResponse<{
+        answer: string;
+        sql?: string;
+        records?: unknown[];
+      }>;
+
+      const assistantMessage = buildMessage({
+        conversationId: id,
         role: 'assistant',
-        content: generateReply(body.content),
-        type: 'text',
-        created_at: new Date().toISOString(),
-      };
-      msgs.push(aiReply);
-      
-      messages.set(params.id, msgs);
-      conversation.updated_at = new Date().toISOString();
-      
-      return ok(aiReply);
+        messageType: 'sql_result',
+        content: aiBody.data.answer || '',
+        sqlText: aiBody.data.sql || null,
+        metaJson: { records: aiBody.data.records || [] },
+      });
+
+      appendMessages(id, userMessage, assistantMessage);
+
+      return ok({
+        user_message: userMessage,
+        assistant_message: assistantMessage,
+      });
     });
 
-    /** POST /ai/conversations/:id/file-notices - 文件通知 */
     fastify.post('/ai/conversations/:id/file-notices', async (request, reply) => {
-      const params = request.params as { id: string };
-      const body = request.body as { file_id: string; file_name: string; file_type: string };
-      const conversation = conversations.get(params.id);
-      
+      const { id } = request.params as { id: string };
+      const body = (request.body as Record<string, unknown> | undefined) || {};
+      const conversation = conversations.get(id);
+
       if (!conversation) {
         reply.code(404);
         return err(404, 'Conversation not found');
       }
-      
-      const notice = {
-        id: `notice_${Date.now()}`,
-        conversation_id: params.id,
-        role: 'system',
-        content: `文件已上传: ${body.file_name} (${body.file_type})`,
-        type: 'file_notice',
-        file_id: body.file_id,
-        file_name: body.file_name,
-        file_type: body.file_type,
-        created_at: new Date().toISOString(),
-      };
-      
-      const msgs = messages.get(params.id) || [];
-      msgs.push(notice);
-      messages.set(params.id, msgs);
-      
+
+      const files = normalizeFiles(body).map((item) => ({
+        file_id: String(item.file_id || ''),
+        filename: String(item.filename || item.file_name || ''),
+        type: String(item.type || item.file_type || ''),
+        records: Number(item.records || 0),
+        source_label: item.source_label ? String(item.source_label) : undefined,
+        source_kind: item.source_kind ? String(item.source_kind) : undefined,
+        detection_confidence:
+          typeof item.detection_confidence === 'number'
+            ? item.detection_confidence
+            : item.detection_confidence
+              ? Number(item.detection_confidence)
+              : undefined,
+      }));
+
+      if (files.length === 0) {
+        reply.code(400);
+        return err(400, 'files are required');
+      }
+
+      const notice = buildMessage({
+        conversationId: id,
+        role: 'assistant',
+        messageType: 'file_notice',
+        content: resolveNoticeContent(files),
+        metaJson: { files },
+      });
+
+      appendMessages(id, notice);
+
       return ok(notice);
     });
 
-    /** POST /ai/conversations/:id/reconcile - 对账 */
     fastify.post('/ai/conversations/:id/reconcile', async (request, reply) => {
-      const params = request.params as { id: string };
-      const body = request.body as { business_file_id?: string; channel_file_id?: string; template_id?: string };
-      const conversation = conversations.get(params.id);
-      
+      const { id } = request.params as { id: string };
+      const body = (request.body as Record<string, unknown> | undefined) || {};
+      const conversation = conversations.get(id);
+
       if (!conversation) {
         reply.code(404);
         return err(404, 'Conversation not found');
       }
-      
-      // 模拟对账结果
-      const result = {
-        batch_id: `batch_${Date.now()}`,
-        batch_no: `BATCH_AI_${Date.now()}`,
-        status: 'processing',
-        business_file_id: body.business_file_id,
-        channel_file_id: body.channel_file_id,
-        template_id: body.template_id,
-        stats: {
-          total: 0,
-          match: 0,
-          rolling: 0,
-          long: 0,
-          short: 0,
-          amount_diff: 0,
+
+      const reconcileResponse = await fastify.inject({
+        method: 'POST',
+        url: '/api/v1/ai/reconcile',
+        payload: body,
+      });
+
+      if (reconcileResponse.statusCode >= 400) {
+        reply.code(reconcileResponse.statusCode);
+        return reconcileResponse.json();
+      }
+
+      const reconcileBody = reconcileResponse.json() as ApiResponse<{
+        batch_id: string;
+        batch_no: string;
+        stats: Record<string, unknown>;
+        message?: string;
+      }>;
+
+      const assistantMessage = buildMessage({
+        conversationId: id,
+        role: 'assistant',
+        messageType: 'reconcile_result',
+        content: reconcileBody.data.message || `对账完成，批次号 ${reconcileBody.data.batch_no}`,
+        metaJson: {
+          batch_id: reconcileBody.data.batch_id,
+          batch_no: reconcileBody.data.batch_no,
+          stats: reconcileBody.data.stats,
         },
-      };
-      
-      return ok(result);
+      });
+
+      appendMessages(id, assistantMessage);
+
+      return ok({
+        batch_id: reconcileBody.data.batch_id,
+        batch_no: reconcileBody.data.batch_no,
+        stats: reconcileBody.data.stats,
+        message: assistantMessage,
+      });
     });
 
-    /** DELETE /ai/conversations/:id - 删除会话 */
     fastify.delete('/ai/conversations/:id', async (request, reply) => {
-      const params = request.params as { id: string };
-      
-      if (!conversations.has(params.id)) {
+      const { id } = request.params as { id: string };
+      const conversation = conversations.get(id);
+
+      if (!conversation) {
         reply.code(404);
         return err(404, 'Conversation not found');
       }
-      
-      conversations.delete(params.id);
-      messages.delete(params.id);
-      
+
+      conversations.delete(id);
+      messages.delete(id);
+
       return ok({ deleted: true });
     });
   };
 };
-
-// 简单回复生成
-function generateReply(content: string): string {
-  const lower = content.toLowerCase();
-  
-  if (lower.includes('对账') || lower.includes('匹配')) {
-    return '我可以帮您进行对账操作。请先上传业务订单文件和渠道流水文件，然后告诉我如何进行匹配。';
-  }
-  if (lower.includes('文件') || lower.includes('上传')) {
-    return '请上传需要对账的文件，支持 Excel、CSV 格式。上传后我会分析文件内容。';
-  }
-  if (lower.includes('查询') || lower.includes('数据')) {
-    return '我可以帮您查询交易数据。请告诉我您想查询什么内容。';
-  }
-  
-  return '您好！我是您的业财一体化助手。我可以帮您：\n1. 上传并识别对账文件\n2. 配置对账规则\n3. 执行对账操作\n4. 查询交易数据\n\n请问有什么可以帮您？';
-}

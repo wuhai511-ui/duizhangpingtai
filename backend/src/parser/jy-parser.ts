@@ -13,7 +13,7 @@ export class JyParser {
     '商户号': 'merchant_no',
     '支付宝账号': 'merchant_no',
     '交易日期': 'trans_date',
-    '交易时间': 'transaction_time',
+    '交易时间': 'trans_time',
     '业务时间': 'transaction_time',
     '账务时间': 'transaction_time',
     '交易创建时间': 'transaction_time',

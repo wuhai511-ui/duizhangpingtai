@@ -29,6 +29,48 @@ function err(code: number, message: string) {
 let prisma: PrismaClient;
 const engine = new ReconciliationEngine();
 
+function buildBatchWhere(fileId?: string | null, checkDate?: string | null) {
+  if (fileId) {
+    return { file_id: fileId };
+  }
+  if (checkDate) {
+    return { trans_date: checkDate };
+  }
+  return null;
+}
+
+async function loadBatchData(batch: {
+  batch_type: string;
+  business_file_id?: string | null;
+  channel_file_id?: string | null;
+  check_date?: string | null;
+}) {
+  const businessWhere = buildBatchWhere(batch.business_file_id, batch.check_date);
+  const channelWhere = buildBatchWhere(batch.channel_file_id, batch.check_date);
+
+  if (!businessWhere || !channelWhere) {
+    throw new Error('Batch is missing source selectors for rerun');
+  }
+
+  if (batch.batch_type === 'ORDER_VS_JY') {
+    const [businessData, channelData] = await Promise.all([
+      prisma.businessOrder.findMany({ where: businessWhere }),
+      prisma.jyTransaction.findMany({ where: channelWhere }),
+    ]);
+    return { businessData, channelData };
+  }
+
+  if (batch.batch_type === 'JY_VS_JS') {
+    const [businessData, channelData] = await Promise.all([
+      prisma.jyTransaction.findMany({ where: businessWhere }),
+      prisma.jsSettlement.findMany({ where: channelWhere }),
+    ]);
+    return { businessData, channelData };
+  }
+
+  throw new Error(`Unsupported batch type: ${batch.batch_type}`);
+}
+
 export const createReconciliationRoutes = (prismaClient: PrismaClient): FastifyPluginAsync => {
   prisma = prismaClient;
   return reconciliationRoutes;
@@ -134,44 +176,7 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
     });
 
     try {
-      let businessData: any[] = [];
-      let channelData: any[] = [];
-
-      if (batch.batch_type === 'ORDER_VS_JY') {
-        // 业务订单 vs 渠道交易
-        const businessWhere: any = {};
-        if (batch.check_date) businessWhere.trans_date = batch.check_date;
-        if (batch.business_file_id) businessWhere.file_id = batch.business_file_id;
-
-        businessData = await prisma.businessOrder.findMany({
-          where: Object.keys(businessWhere).length > 0 ? businessWhere : undefined,
-        });
-
-        const channelWhere: any = {};
-        if (batch.check_date) channelWhere.trans_date = batch.check_date;
-        if (batch.channel_file_id) channelWhere.file_id = batch.channel_file_id;
-
-        channelData = await prisma.jyTransaction.findMany({
-          where: Object.keys(channelWhere).length > 0 ? channelWhere : undefined,
-        });
-      } else if (batch.batch_type === 'JY_VS_JS') {
-        // 渠道交易 vs 渠道结算
-        const businessWhere: any = {};
-        if (batch.check_date) businessWhere.trans_date = batch.check_date;
-        if (batch.business_file_id) businessWhere.file_id = batch.business_file_id;
-
-        businessData = await prisma.jyTransaction.findMany({
-          where: Object.keys(businessWhere).length > 0 ? businessWhere : undefined,
-        });
-
-        const channelWhere: any = {};
-        if (batch.check_date) channelWhere.trans_date = batch.check_date;
-        if (batch.channel_file_id) channelWhere.file_id = batch.channel_file_id;
-
-        channelData = await prisma.jsSettlement.findMany({
-          where: Object.keys(channelWhere).length > 0 ? channelWhere : undefined,
-        });
-      }
+      const { businessData, channelData } = await loadBatchData(batch);
 
       const result = engine.reconcile(businessData, channelData, batch.batch_type as any);
 
@@ -279,21 +284,7 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
     });
 
     try {
-      // 获取业务数据
-      const businessData = await prisma.businessOrder.findMany({
-        where: { file_id: batch.business_file_id ? { equals: batch.business_file_id } : undefined },
-      });
-
-      // 获取渠道数据
-      const channelData = batch.batch_type === 'ORDER_VS_JY'
-        ? await prisma.jyTransaction.findMany({
-            where: { file_id: batch.channel_file_id ? { equals: batch.channel_file_id } : undefined },
-          })
-        : await prisma.jsSettlement.findMany({
-            where: { file_id: batch.channel_file_id ? { equals: batch.channel_file_id } : undefined },
-          });
-
-      // 使用模板配置（如果有的话）
+      const { businessData, channelData } = await loadBatchData(batch);
       const options: any = {};
       if (body.template_id) {
         options.templateId = body.template_id;

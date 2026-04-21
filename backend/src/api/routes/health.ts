@@ -35,11 +35,10 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/health', async (_request, reply) => {
     const mem = process.memoryUsage();
     const memoryUsagePercent = (mem.heapUsed / mem.heapTotal) * 100;
-
     const dbStatus = await checkDatabase();
 
     const response: HealthResponse = {
-      status: dbStatus === 'connected' ? 'ok' : 'degraded',
+      status: dbStatus === 'disconnected' ? 'degraded' : 'ok',
       timestamp: new Date().toISOString(),
       uptime: Math.floor((Date.now() - START_TIME) / 1000),
       version: VERSION,
@@ -50,11 +49,6 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
         usagePercent: Math.round(memoryUsagePercent * 100) / 100,
       },
     };
-
-    // 内存使用超过90%时标记为degraded
-    if (memoryUsagePercent > 90) {
-      response.status = 'degraded';
-    }
 
     const statusCode = response.status === 'ok' ? 200 : 503;
     return reply.status(statusCode).send(response);

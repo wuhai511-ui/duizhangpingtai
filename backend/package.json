@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "tsx watch src/api/index.ts",
     "test": "vitest",
+    "pretest:run": "node tests/prepare-test-db.mjs && prisma generate",
     "test:run": "vitest run",
     "build": "tsc",
     "db:migrate": "tsx src/db/migrate.ts"

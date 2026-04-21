@@ -142,6 +142,19 @@ describe('E2E: 商户 + 交易 + AI 查询', () => {
 
   beforeEach(async () => {
     // 清理数据
+    await prisma.reconciliationDetail.deleteMany();
+    await prisma.reconciliationBatch.deleteMany();
+    await prisma.businessOrder.deleteMany();
+    await prisma.jyInstallment.deleteMany();
+    await prisma.d0Withdrawal.deleteMany();
+    await prisma.dwWithdrawal.deleteMany();
+    await prisma.sepSummary.deleteMany();
+    await prisma.sepTransaction.deleteMany();
+    await prisma.accAccountSettlement.deleteMany();
+    await prisma.jzWalletSettlement.deleteMany();
+    await prisma.jsSettlement.deleteMany();
+    await prisma.invoice.deleteMany();
+    await prisma.user.deleteMany();
     await prisma.jyTransaction.deleteMany();
     await prisma.merchant.deleteMany();
 
