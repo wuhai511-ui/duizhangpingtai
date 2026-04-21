@@ -1,0 +1,386 @@
+// Prisma Schema — 业财一体化 MVP
+// 所有金额字段使用 BigInt（INTEGER in SQLite/PostgreSQL），单位：分
+// 生产环境切换 PostgreSQL 时：改 provider + 安装对应依赖即可
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "windows"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── 用户表 ─────────────────────────────────────────────────────────────────
+
+model User {
+  id         String   @id @default(uuid())
+  phone      String   @unique  // 手机号（登录账号）
+  password   String              // 密码
+  name       String?             // 用户姓名
+  merchantId String?            // 绑定的商户 ID
+  status     Int      @default(1) // 1=正常 0=禁用
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  merchant   Merchant? @relation(fields: [merchantId], references: [id])
+}
+
+// ─── 商户表 ─────────────────────────────────────────────────────────────────
+
+model Merchant {
+  id          String   @id @default(uuid())
+  merchant_no String   @unique  // 商户编号
+  name        String?           // 商户名称
+  status      Int     @default(1)  // 1=正常 0=禁用
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  // 关联（用显式 relation name 避免歧义）
+  jyTransactions    JyTransaction[]    @relation("MerchantJYT")
+  jsSettlements     JsSettlement[]     @relation("MerchantJS")
+  jzWalletSettlements JzWalletSettlement[] @relation("MerchantJZ")
+  accSettlements    AccAccountSettlement[] @relation("MerchantACC")
+  sepTransactions   SepTransaction[]   @relation("MerchantSEP")
+  sepSummaries      SepSummary[]        @relation("MerchantSEP")
+  dwWithdrawals     DwWithdrawal[]      @relation("MerchantDW")
+  d0Withdrawals     D0Withdrawal[]      @relation("MerchantD0")
+  jyInstallments    JyInstallment[]     @relation("MerchantFInstallment")
+  businessOrders    BusinessOrder[]    @relation("MerchantBusinessOrder")
+  users             User[]              // 关联用户
+
+  @@index([merchant_no])
+}
+
+// ─── 交易流水（JY）──────────────────────────────────────────────────────────
+
+model JyTransaction {
+  id                  String   @id @default(uuid())
+  merchantId          String   @map("merchant_id")
+  trans_date          String               // YYYY-MM-DD
+  trans_time          String               // HH:mm:ss
+  terminal_no        String?
+  branch_name         String?
+  trans_type          String?              // CONSUMPTION / REFUND
+  lakala_serial       String              @map("lakala_serial")
+  orig_lakala_serial  String?             @map("orig_lakala_serial")
+  card_no             String?             @map("card_no")
+  pay_channel         String?             @map("pay_channel")
+  bank_name           String?             @map("bank_name")
+  amount              BigInt              // 分
+  fee                 BigInt              // 分
+  settle_amount       BigInt              @map("settle_amount")
+  merchant_order_no   String?             @map("merchant_order_no")
+  pay_order_no        String?             @map("pay_order_no")
+  external_serial     String?             @map("external_serial")
+  sys_ref_no          String?             @map("sys_ref_no")
+  remark              String?
+  pay_method          String?             @map("pay_method")
+  file_id             String?             @map("file_id")
+  created_at          DateTime @default(now())
+
+  merchant            Merchant @relation("MerchantJYT", fields: [merchantId], references: [id])
+
+  @@unique([merchantId, merchant_order_no])
+  @@index([merchantId, trans_date])
+  @@index([trans_date])
+  @@index([file_id])
+}
+
+// ─── 结算明细（JS）───────────────────────────────────────────────────────────
+
+model JsSettlement {
+  id            String   @id @default(uuid())
+  merchantId    String   @map("merchant_id")
+  trans_date    String
+  trans_time    String?
+  terminal_no   String?  @map("terminal_no")
+  lakala_serial String   @map("lakala_serial")
+  amount        BigInt
+  fee           BigInt
+  settle_amount BigInt   @map("settle_amount")
+  settle_date   String   @map("settle_date")
+  settle_status Int      @map("settle_status")
+  file_id       String?  @map("file_id")
+  created_at    DateTime @default(now())
+
+  merchant      Merchant @relation("MerchantJS", fields: [merchantId], references: [id])
+
+  @@unique([merchantId, lakala_serial, settle_date])
+  @@index([settle_date])
+  @@index([file_id])
+}
+
+// ─── 钱包结算（JZ）───────────────────────────────────────────────────────────
+
+model JzWalletSettlement {
+  id          String   @id @default(uuid())
+  merchantId  String   @map("merchant_id")
+  settle_date String   @map("settle_date")
+  wallet_type String   @map("wallet_type")
+  amount      BigInt
+  fee         BigInt
+  settle_amount BigInt @map("settle_amount")
+  created_at  DateTime @default(now())
+
+  merchant    Merchant @relation("MerchantJZ", fields: [merchantId], references: [id])
+
+  @@unique([merchantId, settle_date, wallet_type])
+  @@index([settle_date])
+}
+
+// ─── 账户结算（ACC）──────────────────────────────────────────────────────────
+
+model AccAccountSettlement {
+  id            String   @id @default(uuid())
+  merchantId    String   @map("merchant_id")
+  account_no    String   @map("account_no")
+  settle_date   String   @map("settle_date")
+  amount        BigInt
+  fee           BigInt
+  settle_amount BigInt   @map("settle_amount")
+  created_at    DateTime @default(now())
+
+  merchant      Merchant @relation("MerchantACC", fields: [merchantId], references: [id])
+
+  @@unique([merchantId, account_no, settle_date])
+  @@index([settle_date])
+}
+
+// ─── 分账交易（SEP）────────────────────────────────────────────────────────
+
+model SepTransaction {
+  id            String   @id @default(uuid())
+  merchantId    String   @map("merchant_id")
+  trans_date    String   @map("trans_date")
+  lakala_serial String   @map("lakala_serial")
+  amount        BigInt
+  sep_amount    BigInt   @map("sep_amount")
+  sep_rate      Int      @map("sep_rate")
+  created_at    DateTime @default(now())
+
+  merchant      Merchant @relation("MerchantSEP", fields: [merchantId], references: [id])
+
+  @@unique([merchantId, lakala_serial])
+  @@index([trans_date])
+}
+
+// ─── 分账汇总（SEP-SUM）─────────────────────────────────────────────────────
+
+model SepSummary {
+  id            String   @id @default(uuid())
+  merchantId    String   @map("merchant_id")
+  settle_date   String   @map("settle_date")
+  total_amount  BigInt   @map("total_amount")
+  total_sep     BigInt   @map("total_sep")
+  trans_count   Int      @map("trans_count")
+  created_at    DateTime @default(now())
+
+  merchant      Merchant @relation("MerchantSEP", fields: [merchantId], references: [id])
+
+  @@unique([merchantId, settle_date])
+  @@index([settle_date])
+}
+
+// ─── 提现对账（DW）──────────────────────────────────────────────────────────
+
+model DwWithdrawal {
+  id              String   @id @default(uuid())
+  merchantId      String   @map("merchant_id")
+  withdraw_date   String   @map("withdraw_date")
+  withdraw_serial String   @map("withdraw_serial")
+  amount          BigInt
+  fee             BigInt
+  status          Int
+  created_at      DateTime @default(now())
+
+  merchant        Merchant @relation("MerchantDW", fields: [merchantId], references: [id])
+
+  @@unique([merchantId, withdraw_serial])
+  @@index([withdraw_date])
+}
+
+// ─── D0提现（D0）────────────────────────────────────────────────────────────
+
+model D0Withdrawal {
+  id            String   @id @default(uuid())
+  merchantId    String   @map("merchant_id")
+  trans_date    String   @map("trans_date")
+  lakala_serial String   @map("lakala_serial")
+  amount        BigInt
+  fee           BigInt
+  d0_fee        BigInt   @map("d0_fee")
+  created_at    DateTime @default(now())
+
+  merchant      Merchant @relation("MerchantD0", fields: [merchantId], references: [id])
+
+  @@unique([merchantId, lakala_serial])
+  @@index([trans_date])
+}
+
+// ─── 分期交易（JY-FQ）────────────────────────────────────────────────────────
+
+model JyInstallment {
+  id                String   @id @default(uuid())
+  merchantId        String   @map("merchant_id")
+  trans_date        String   @map("trans_date")
+  lakala_serial     String   @map("lakala_serial")
+  amount            BigInt
+  installment_count Int      @map("installment_count")
+  per_amount        BigInt   @map("per_amount")
+  created_at        DateTime @default(now())
+
+  merchant          Merchant @relation("MerchantFInstallment", fields: [merchantId], references: [id])
+
+  @@unique([merchantId, lakala_serial])
+  @@index([trans_date])
+}
+
+// ─── 业务订单 ───────────────────────────────────────────────────────────────
+
+model BusinessOrder {
+  id              String   @id @default(uuid())
+  merchantId      String   @map("merchant_id")
+  order_no        String   @unique           // 订单编号
+  order_type      String                     // 订单类型
+  pay_method      String                     // 支付方式
+  channel_name    String   @map("channel_name") // 渠道名称
+  customer_phone  String?  @map("customer_phone")
+  customer_name   String?  @map("customer_name")
+  order_amount    BigInt                     // 订单金额（分）
+  received_amount BigInt                     // 实收金额（分）
+  paid_amount     BigInt                     // 实付金额（分）
+  channel_fee     BigInt                     // 通道手续费（分）
+  order_status    String                     // 订单状态
+  pay_serial_no   String?                   // 支付流水号（用于对账）
+  orig_serial_no  String?  @map("orig_serial_no")
+  trans_date      String   @map("trans_date") // 交易日期
+  file_id         String?  @map("file_id")   // 来源文件ID
+  created_at      DateTime @default(now())
+
+  merchant        Merchant @relation("MerchantBusinessOrder", fields: [merchantId], references: [id])
+
+  @@index([trans_date])
+  @@index([pay_serial_no])
+}
+
+// ─── 电子发票 ───────────────────────────────────────────────────────────────
+
+model Invoice {
+  id            String   @id @default(uuid())
+  merchantId    String   @map("merchant_id")
+  file_id       String   @unique @map("file_id")
+  invoice_no    String?  @map("invoice_no")     // 发票号码
+  invoice_code  String?  @map("invoice_code")   // 发票代码
+  buyer_name    String?  @map("buyer_name")     // 购买方名称
+  buyer_tax_no  String?  @map("buyer_tax_no")   // 购买方税号
+  seller_name   String?  @map("seller_name")    // 销售方名称
+  seller_tax_no String?  @map("seller_tax_no")  // 销售方税号
+  amount        BigInt                          // 金额（分）
+  tax_amount    BigInt   @map("tax_amount")     // 税额（分）
+  total_amount  BigInt   @map("total_amount")   // 价税合计（分）
+  invoice_date  String?  @map("invoice_date")   // 开票日期
+  ocr_raw       String?  @map("ocr_raw")        // OCR原始结果JSON
+  status        Int      @default(0)            // 0=待识别 1=已识别 2=失败
+  created_at    DateTime @default(now())
+
+  @@index([status])
+}
+
+// ─── 对账明细 ───────────────────────────────────────────────────────────────
+
+model ReconciliationDetail {
+  id              String   @id @default(uuid())
+  batch_id        String   @map("batch_id")
+  serial_no       String   @map("serial_no")        // 流水号
+  business_data   String?  @map("business_data")    // 业务方数据JSON
+  channel_data    String?  @map("channel_data")     // 渠道方数据JSON
+  result_type     String   @map("result_type")      // MATCH / ROLLING / LONG / SHORT / AMOUNT_MISMATCH
+  business_amount BigInt?  @map("business_amount") // 业务方金额
+  channel_amount  BigInt?  @map("channel_amount")   // 渠道方金额
+  diff_amount     BigInt?  @map("diff_amount")      // 差异金额
+  match_date      String?  @map("match_date")       // 滚动匹配日期
+  remark          String?
+  created_at      DateTime @default(now())
+
+  batch           ReconciliationBatch @relation(fields: [batch_id], references: [id])
+
+  @@index([batch_id])
+  @@index([result_type])
+}
+
+// ─── 账单模板 ───────────────────────────────────────────────────────────────
+
+model BillTemplate {
+  id             String   @id @default(uuid())
+  name           String                            // 模板名称
+  type           String                            // JY / JS / BUSINESS_ORDER / INVOICE
+  field_config   String   @map("field_config")    // JSON: 字段映射配置
+  match_rules    String   @default("{}") @map("match_rules") // JSON: 模板匹配规则
+  delimiter      String   @default("|")            // 分隔符
+  header_row     Int      @default(1)             // 表头行号
+  data_start_row Int      @default(2)             // 数据起始行
+  sample_fingerprint String? @map("sample_fingerprint")
+  confidence     Float?
+  source_hint    String?  @map("source_hint")
+  version        Int      @default(1)
+  created_by     String?  @map("created_by")
+  is_default     Boolean  @default(false) @map("is_default")
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  @@index([type])
+  @@index([is_default])
+  @@index([sample_fingerprint])
+}
+
+// ─── 对账批次记录 ───────────────────────────────────────────────────────────
+
+model ReconciliationBatch {
+  id               String    @id @default(uuid())
+  batch_no         String    @unique
+  check_date       String    @map("check_date")
+  batch_type       String    @map("batch_type")      // ORDER_VS_JY / JY_VS_JS
+  business_file_id String?   @map("business_file_id") // 业务订单文件ID
+  channel_file_id  String?   @map("channel_file_id")  // 渠道文件ID
+  record_count     Int       @map("record_count")
+  total_amount     BigInt    @map("total_amount")
+  match_count      Int       @default(0) @map("match_count")    // 对平
+  rolling_count    Int       @default(0) @map("rolling_count")  // 滚动对平
+  long_count       Int       @default(0) @map("long_count")     // 长款
+  short_count      Int       @default(0) @map("short_count")    // 短款
+  amount_diff_count Int      @default(0) @map("amount_diff_count") // 金额不一致
+  status           Int       @default(0)              // 0=待处理 1=处理中 2=完成 3=失败
+  error_msg        String?   @map("error_msg")
+  started_at       DateTime  @default(now()) @map("started_at")
+  finished_at      DateTime? @map("finished_at")
+
+  details          ReconciliationDetail[]
+
+  @@index([check_date])
+  @@index([status])
+  @@index([batch_type])
+}
+
+// ─── 上传文件记录 ───────────────────────────────────────────────────────────
+
+model UploadedFile {
+  id            String   @id @default(uuid())
+  filename      String                            // 原始文件名
+  file_type     String   @map("file_type")        // JY / JS / BUSINESS_ORDER 等
+  source        String   @default("upload")        // sftp / upload / api
+  source_label  String?  @map("source_label")     // 来源标签：微信账单/支付宝账单/拉卡拉账单 等
+  source_kind   String?  @map("source_kind")      // 来源类型：wechat/alipay/lakala/meituan/douyin/bank
+  record_count  Int      @default(0) @map("record_count") // 解析记录数
+  merchant_id   String?  @map("merchant_id")      // 关联商户
+  session_id    String?  @map("session_id")       // AI 会话 ID
+  headers_json  String?  @map("headers_json")     // 表头 JSON（用于来源识别）
+  status        Int      @default(1)              // 1=正常 0=删除
+  created_at    DateTime @default(now())
+
+  @@index([file_type])
+  @@index([source_kind])
+  @@index([session_id])
+  @@index([merchant_id])
+}

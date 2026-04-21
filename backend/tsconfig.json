@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/**/*"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/api/routes/invoice.ts",
+    "src/api/routes/reconciliation.ts",
+    "src/api/routes/template.ts",
+    "src/api/routes/user.ts",
+    "src/services/reconciliation.ts",
+    "src/business/services/reconciliation.ts",
+    "src/db/query.ts",
+    "src/scheduler/**/*"
+  ]
+}

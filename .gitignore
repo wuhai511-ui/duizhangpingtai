@@ -1,0 +1,14 @@
+node_modules/
+dist/
+_server_patch/
+
+backend/node_modules/
+backend/dist/
+backend/.env
+backend/dev.db
+backend/prisma/*.db
+backend/prisma/*.db-*
+backend/coverage/
+
+.DS_Store
+Thumbs.db
