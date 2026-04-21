@@ -178,7 +178,7 @@ export const templateRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
     } else {
-      const body = request.body as Record<string, unknown>;
+      const body = ((request.body as Record<string, unknown> | undefined) || {});
       filename = String(body.filename || filename);
       if (typeof body.file_type === 'string') fileType = body.file_type;
       if (typeof body.content === 'string') content = body.content;

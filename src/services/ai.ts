@@ -242,11 +242,6 @@ export const aiApi = {
     const response = await api.post<ApiResponse<TemplateAnalyzeResult>>(
       '/ai/template/analyze',
       formData,
-      {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      },
     );
 
     return response.data.data;
