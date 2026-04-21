@@ -111,14 +111,7 @@ export const aiReconConfigRoutes: FastifyPluginAsync = async (fastify) => {
     return ok({ template });
   });
 
-  /**
-   * GET /reconciliation/templates
-   * 获取所有可用模板
-   */
-  fastify.get('/reconciliation/templates', async () => {
-    const templates = getAvailableTemplates();
-    return ok({ templates });
-  });
+  // 注意：GET /reconciliation/templates 已在 template.ts 中定义，此处不再重复
 
   /**
    * POST /reconciliation/templates/analyze

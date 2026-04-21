@@ -257,6 +257,106 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
     })), { page, pageSize, total });
   });
 
+  /** 对账批次重新执行 */
+  fastify.post('/reconciliation/batches/:id/rerun', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { template_id?: string };
+
+    // 获取批次
+    const batch = await prisma.reconciliationBatch.findUnique({
+      where: { id },
+      include: { details: true },
+    });
+
+    if (!batch) {
+      return reply.status(404).send(err(4, 'Batch not found'));
+    }
+
+    // 更新状态为处理中
+    await prisma.reconciliationBatch.update({
+      where: { id },
+      data: { status: 1, started_at: new Date() },
+    });
+
+    try {
+      // 获取业务数据
+      const businessData = await prisma.businessOrder.findMany({
+        where: { file_id: batch.business_file_id ? { equals: batch.business_file_id } : undefined },
+      });
+
+      // 获取渠道数据
+      const channelData = batch.batch_type === 'ORDER_VS_JY'
+        ? await prisma.jyTransaction.findMany({
+            where: { file_id: batch.channel_file_id ? { equals: batch.channel_file_id } : undefined },
+          })
+        : await prisma.jsSettlement.findMany({
+            where: { file_id: batch.channel_file_id ? { equals: batch.channel_file_id } : undefined },
+          });
+
+      // 使用模板配置（如果有的话）
+      const options: any = {};
+      if (body.template_id) {
+        options.templateId = body.template_id;
+      }
+
+      const result = engine.reconcile(businessData, channelData, batch.batch_type as any, options);
+
+      // 清除旧明细
+      await prisma.reconciliationDetail.deleteMany({ where: { batch_id: id } });
+
+      // 保存新对账明细
+      for (const detail of result.details) {
+        await prisma.reconciliationDetail.create({
+          data: {
+            batch_id: id,
+            serial_no: detail.serial_no,
+            result_type: detail.result_type,
+            business_amount: detail.business_amount ? BigInt(detail.business_amount) : null,
+            channel_amount: detail.channel_amount ? BigInt(detail.channel_amount) : null,
+            diff_amount: detail.diff_amount ? BigInt(detail.diff_amount) : null,
+            match_date: detail.match_date || null,
+            business_data: detail.business_data || null,
+            channel_data: detail.channel_data || null,
+          },
+        });
+      }
+
+      // 更新批次统计
+      const totalAmount = result.details.reduce((sum, d) => {
+        return sum + (d.business_amount || d.channel_amount || 0n);
+      }, 0n);
+
+      await prisma.reconciliationBatch.update({
+        where: { id },
+        data: {
+          record_count: result.stats.total,
+          total_amount: totalAmount,
+          match_count: result.stats.match,
+          rolling_count: result.stats.rolling,
+          long_count: result.stats.long,
+          short_count: result.stats.short,
+          amount_diff_count: result.stats.amount_diff,
+          status: 2,
+          finished_at: new Date(),
+        },
+      });
+
+      return ok({
+        batch_id: id,
+        stats: result.stats,
+      });
+    } catch (error) {
+      await prisma.reconciliationBatch.update({
+        where: { id },
+        data: {
+          status: 3,
+          error_msg: (error as Error).message,
+        },
+      });
+      return reply.status(500).send(err(3, (error as Error).message));
+    }
+  });
+
   /** 导出报告 */
   fastify.get('/reconciliation/batches/:id/report', async (request, reply) => {
     const { id } = request.params as { id: string };

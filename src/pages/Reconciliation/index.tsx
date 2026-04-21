@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Alert, Button, Card, Select, Space, Table, Tag, Typography } from 'antd';
-import { useQuery } from '@tanstack/react-query';
+import { Alert, Button, Card, message, Select, Space, Table, Tag, Typography } from 'antd';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { reconciliationApi } from '../../services/reconciliation';
 import type { ReconciliationBatch } from '../../types';
 
@@ -55,6 +55,22 @@ const ReconciliationPage: React.FC = () => {
         batchType: batchType || undefined,
       }),
   });
+
+  const rerunMutation = useMutation({
+    mutationFn: ({ id, templateId }: { id: string; templateId?: string }) =>
+      reconciliationApi.rerunBatch(id, templateId),
+    onSuccess: () => {
+      message.success('重新对账已完成');
+      batchesQuery.refetch();
+    },
+    onError: (error: any) => {
+      message.error('重新对账失败: ' + error.message);
+    },
+  });
+
+  const handleRerun = (record: ReconciliationBatch) => {
+    rerunMutation.mutate({ id: record.id });
+  };
 
   const columns = [
     {
@@ -124,12 +140,22 @@ const ReconciliationPage: React.FC = () => {
     {
       title: '操作',
       key: 'action',
-      width: 120,
+      width: 180,
       fixed: 'right' as const,
       render: (_: unknown, record: ReconciliationBatch) => (
-        <Button type="link" style={{ padding: 0 }} onClick={() => openBatchDetail(record.id)}>
-          查看明细
-        </Button>
+        <Space>
+          <Button
+            type="link"
+            size="small"
+            onClick={() => handleRerun(record)}
+            loading={rerunMutation.isPending}
+          >
+            重新对账
+          </Button>
+          <Button type="link" size="small" onClick={() => openBatchDetail(record.id)}>
+            查看明细
+          </Button>
+        </Space>
       ),
     },
   ];

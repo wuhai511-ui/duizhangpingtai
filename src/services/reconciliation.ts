@@ -24,6 +24,14 @@ export const reconciliationApi = {
     return response.data.data;
   },
 
+  rerunBatch: async (id: string, templateId?: string): Promise<{ batch_id: string; stats: any }> => {
+    const response = await api.post<ApiResponse<{ batch_id: string; stats: any }>>(
+      `/reconciliation/batches/${id}/rerun`,
+      { template_id: templateId },
+    );
+    return response.data.data;
+  },
+
   getBatchDetails: async (
     id: string,
     params?: { page?: number; pageSize?: number; result_type?: string },
