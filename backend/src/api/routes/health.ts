@@ -1,5 +1,7 @@
+import fs from 'fs';
+import path from 'path';
 import type { FastifyPluginAsync } from 'fastify';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../../db/prisma.js';
 
 const VERSION = process.env.npm_package_version || '1.0.0';
 const START_TIME = Date.now();
@@ -18,13 +20,21 @@ interface HealthResponse {
 }
 
 async function checkDatabase(): Promise<'connected' | 'disconnected' | 'not_configured'> {
-  if (!process.env.DATABASE_URL) {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
     return 'not_configured';
   }
+
   try {
-    const prisma = new PrismaClient();
-    await prisma.$queryRaw`SELECT 1`;
-    await prisma.$disconnect();
+    if (databaseUrl.startsWith('file:')) {
+      const relativePath = databaseUrl.slice('file:'.length);
+      const absolutePath = path.resolve(process.cwd(), relativePath);
+      if (!fs.existsSync(absolutePath)) {
+        return 'disconnected';
+      }
+    }
+
+    await prisma.$connect();
     return 'connected';
   } catch {
     return 'disconnected';
