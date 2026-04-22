@@ -46,6 +46,24 @@ invalid_line`;
       expect(result.success).toBe(true);
       expect(result.records).toHaveLength(1);
     });
+
+    it('should derive trans_date from trans_time when date column is missing', () => {
+      const content = `商户号,交易时间,微信订单号,应结订单金额,手续费
+8222900481601ZW,2025-06-13 16:50:08,4200002694202506134562336448,124.00,0.74`;
+
+      const result = parser.parse(content, 'test渠道数据.csv');
+
+      expect(result.success).toBe(true);
+      expect(result.records).toHaveLength(1);
+      expect(result.records[0]).toMatchObject({
+        merchant_no: '8222900481601ZW',
+        trans_date: '2025-06-13',
+        trans_time: '16:50:08',
+        lakala_serial: '4200002694202506134562336448',
+        settle_amount: 12400,
+        fee: 74,
+      });
+    });
   });
 
   describe('validate', () => {

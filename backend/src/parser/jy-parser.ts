@@ -132,9 +132,17 @@ export class JyParser {
       }
     });
 
-    const transactionTime = String(raw.transaction_time || '');
-    const derivedDate = raw.trans_date ? this.cleanText(raw.trans_date) : this.extractDate(transactionTime);
-    const derivedTime = this.extractTime(transactionTime);
+    const transTimeRaw = this.cleanText(raw.trans_time);
+    const transactionTimeRaw = this.cleanText(raw.transaction_time);
+    const combinedDateTime = transactionTimeRaw || transTimeRaw;
+    const derivedDate =
+      raw.trans_date
+        ? this.cleanText(raw.trans_date)
+        : this.extractDate(combinedDateTime);
+    const derivedTime =
+      this.extractTime(transactionTimeRaw) ||
+      this.extractTime(transTimeRaw) ||
+      transTimeRaw;
 
     const amount = this.parseAmount(raw.amount);
     const fee = this.parseAmount(raw.fee);
@@ -143,7 +151,7 @@ export class JyParser {
     return {
       merchant_no: String(raw.merchant_no || ''),
       trans_date: derivedDate,
-      trans_time: raw.trans_time ? String(raw.trans_time) : derivedTime,
+      trans_time: derivedTime,
       terminal_no: raw.terminal_no ? String(raw.terminal_no) : undefined,
       branch_name: raw.branch_name ? String(raw.branch_name) : undefined,
       trans_type: raw.trans_type ? String(raw.trans_type) : undefined,
