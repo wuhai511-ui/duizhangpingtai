@@ -10,6 +10,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { PrismaClient } from '@prisma/client';
 import { ReconciliationEngine, ResultType } from '../../services/reconciliation-engine.js';
+import { ReconPostProcessor } from '../services/recon-post-processor.js';
 
 interface ApiResponse<T = unknown> {
   code: number;
@@ -28,6 +29,7 @@ function err(code: number, message: string) {
 
 let prisma: PrismaClient;
 const engine = new ReconciliationEngine();
+let postProcessor: ReconPostProcessor;
 
 function buildBatchWhere(fileId?: string | null, checkDate?: string | null) {
   if (fileId) {
@@ -73,6 +75,7 @@ async function loadBatchData(batch: {
 
 export const createReconciliationRoutes = (prismaClient: PrismaClient): FastifyPluginAsync => {
   prisma = prismaClient;
+  postProcessor = new ReconPostProcessor(prismaClient);
   return reconciliationRoutes;
 };
 
@@ -172,7 +175,7 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
     // 更新状态为处理中
     await prisma.reconciliationBatch.update({
       where: { id },
-      data: { status: 1 },
+      data: { status: 1, post_process_status: 'PENDING', post_processed_at: null },
     });
 
     try {
@@ -187,6 +190,8 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
             batch_id: id,
             serial_no: detail.serial_no,
             result_type: detail.result_type,
+            final_result_type: detail.result_type,
+            process_status: 'PENDING',
             business_amount: detail.business_amount ? BigInt(detail.business_amount) : null,
             channel_amount: detail.channel_amount ? BigInt(detail.channel_amount) : null,
             diff_amount: detail.diff_amount ? BigInt(detail.diff_amount) : null,
@@ -217,9 +222,20 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
 
+      let postProcessResult: unknown = null;
+      let postProcessError: string | null = null;
+      try {
+        postProcessResult = await postProcessor.processBatch(id);
+      } catch (postError) {
+        postProcessError = (postError as Error).message;
+      }
+
       return ok({
         batch_id: id,
         stats: result.stats,
+        post_process: postProcessError
+          ? { status: 'FAILED', message: postProcessError }
+          : { status: 'DONE', result: postProcessResult },
       });
     } catch (error) {
       await prisma.reconciliationBatch.update({
@@ -280,7 +296,7 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
     // 更新状态为处理中
     await prisma.reconciliationBatch.update({
       where: { id },
-      data: { status: 1, started_at: new Date() },
+      data: { status: 1, started_at: new Date(), post_process_status: 'PENDING', post_processed_at: null },
     });
 
     try {
@@ -293,6 +309,8 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
       const result = engine.reconcile(businessData, channelData, batch.batch_type as any, options);
 
       // 清除旧明细
+      await prisma.reconProcessLog.deleteMany({ where: { batch_id: id } });
+      await prisma.exceptionTicket.deleteMany({ where: { batch_id: id } });
       await prisma.reconciliationDetail.deleteMany({ where: { batch_id: id } });
 
       // 保存新对账明细
@@ -302,6 +320,8 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
             batch_id: id,
             serial_no: detail.serial_no,
             result_type: detail.result_type,
+            final_result_type: detail.result_type,
+            process_status: 'PENDING',
             business_amount: detail.business_amount ? BigInt(detail.business_amount) : null,
             channel_amount: detail.channel_amount ? BigInt(detail.channel_amount) : null,
             diff_amount: detail.diff_amount ? BigInt(detail.diff_amount) : null,
@@ -332,9 +352,20 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
 
+      let postProcessResult: unknown = null;
+      let postProcessError: string | null = null;
+      try {
+        postProcessResult = await postProcessor.processBatch(id, { force: true });
+      } catch (postError) {
+        postProcessError = (postError as Error).message;
+      }
+
       return ok({
         batch_id: id,
         stats: result.stats,
+        post_process: postProcessError
+          ? { status: 'FAILED', message: postProcessError }
+          : { status: 'DONE', result: postProcessResult },
       });
     } catch (error) {
       await prisma.reconciliationBatch.update({

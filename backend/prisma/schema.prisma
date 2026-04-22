@@ -291,23 +291,29 @@ model Invoice {
 // ─── 对账明细 ───────────────────────────────────────────────────────────────
 
 model ReconciliationDetail {
-  id              String   @id @default(uuid())
-  batch_id        String   @map("batch_id")
-  serial_no       String   @map("serial_no")        // 流水号
-  business_data   String?  @map("business_data")    // 业务方数据JSON
-  channel_data    String?  @map("channel_data")     // 渠道方数据JSON
-  result_type     String   @map("result_type")      // MATCH / ROLLING / LONG / SHORT / AMOUNT_MISMATCH
-  business_amount BigInt?  @map("business_amount") // 业务方金额
-  channel_amount  BigInt?  @map("channel_amount")   // 渠道方金额
-  diff_amount     BigInt?  @map("diff_amount")      // 差异金额
-  match_date      String?  @map("match_date")       // 滚动匹配日期
-  remark          String?
-  created_at      DateTime @default(now())
+  id                String             @id @default(uuid())
+  batch_id          String             @map("batch_id")
+  serial_no         String             @map("serial_no")
+  business_data     String?            @map("business_data")
+  channel_data      String?            @map("channel_data")
+  result_type       String             @map("result_type")
+  final_result_type String?            @map("final_result_type")
+  business_amount   BigInt?            @map("business_amount")
+  channel_amount    BigInt?            @map("channel_amount")
+  diff_amount       BigInt?            @map("diff_amount")
+  match_date        String?            @map("match_date")
+  process_status    String             @default("PENDING") @map("process_status")
+  process_note      String?            @map("process_note")
+  remark            String?
+  created_at        DateTime           @default(now())
 
-  batch           ReconciliationBatch @relation(fields: [batch_id], references: [id])
+  batch             ReconciliationBatch @relation(fields: [batch_id], references: [id])
+  exception_ticket  ExceptionTicket?
+  process_logs      ReconProcessLog[]
 
   @@index([batch_id])
   @@index([result_type])
+  @@index([process_status])
 }
 
 // ─── 账单模板 ───────────────────────────────────────────────────────────────
@@ -338,30 +344,105 @@ model BillTemplate {
 // ─── 对账批次记录 ───────────────────────────────────────────────────────────
 
 model ReconciliationBatch {
-  id               String    @id @default(uuid())
-  batch_no         String    @unique
-  check_date       String    @map("check_date")
-  batch_type       String    @map("batch_type")      // ORDER_VS_JY / JY_VS_JS
-  business_file_id String?   @map("business_file_id") // 业务订单文件ID
-  channel_file_id  String?   @map("channel_file_id")  // 渠道文件ID
-  record_count     Int       @map("record_count")
-  total_amount     BigInt    @map("total_amount")
-  match_count      Int       @default(0) @map("match_count")    // 对平
-  rolling_count    Int       @default(0) @map("rolling_count")  // 滚动对平
-  long_count       Int       @default(0) @map("long_count")     // 长款
-  short_count      Int       @default(0) @map("short_count")    // 短款
-  amount_diff_count Int      @default(0) @map("amount_diff_count") // 金额不一致
-  status           Int       @default(0)              // 0=待处理 1=处理中 2=完成 3=失败
-  error_msg        String?   @map("error_msg")
-  started_at       DateTime  @default(now()) @map("started_at")
-  finished_at      DateTime? @map("finished_at")
+  id                  String                 @id @default(uuid())
+  batch_no            String                 @unique
+  check_date          String                 @map("check_date")
+  batch_type          String                 @map("batch_type")
+  business_file_id    String?                @map("business_file_id")
+  channel_file_id     String?                @map("channel_file_id")
+  record_count        Int                    @map("record_count")
+  total_amount        BigInt                 @map("total_amount")
+  match_count         Int                    @default(0) @map("match_count")
+  rolling_count       Int                    @default(0) @map("rolling_count")
+  long_count          Int                    @default(0) @map("long_count")
+  short_count         Int                    @default(0) @map("short_count")
+  amount_diff_count   Int                    @default(0) @map("amount_diff_count")
+  status              Int                    @default(0)
+  post_process_status String                 @default("PENDING") @map("post_process_status")
+  post_processed_at   DateTime?              @map("post_processed_at")
+  error_msg           String?                @map("error_msg")
+  started_at          DateTime               @default(now()) @map("started_at")
+  finished_at         DateTime?              @map("finished_at")
 
-  details          ReconciliationDetail[]
+  details             ReconciliationDetail[]
+  exception_tickets   ExceptionTicket[]
+  process_logs        ReconProcessLog[]
 
   @@index([check_date])
   @@index([status])
   @@index([batch_type])
+  @@index([post_process_status])
 }
+
+model ExceptionTicket {
+  id              String           @id @default(uuid())
+  batch_id        String           @map("batch_id")
+  detail_id       String           @unique @map("detail_id")
+  serial_no       String           @map("serial_no")
+  exception_type  String           @map("exception_type")
+  exception_data  String           @map("exception_data")
+  status          String           @default("OPEN")
+  severity        String           @default("MEDIUM")
+  resolution      String?
+  resolution_note String?          @map("resolution_note")
+  assignee_id     String?          @map("assignee_id")
+  resolved_by     String?          @map("resolved_by")
+  resolved_at     DateTime?        @map("resolved_at")
+  closed_at       DateTime?        @map("closed_at")
+  created_at      DateTime         @default(now())
+  updated_at      DateTime         @updatedAt
+
+  batch           ReconciliationBatch  @relation(fields: [batch_id], references: [id])
+  detail          ReconciliationDetail @relation(fields: [detail_id], references: [id])
+  process_logs    ReconProcessLog[]
+
+  @@index([batch_id, status])
+  @@index([batch_id, exception_type])
+  @@index([status, created_at])
+  @@index([assignee_id])
+  @@map("exception_tickets")
+}
+
+model ReconRule {
+  id             String         @id @default(uuid())
+  name           String         @unique
+  description    String?
+  rule_type      String         @map("rule_type")
+  condition_expr String         @map("condition_expr")
+  action_expr    String         @map("action_expr")
+  priority       Int            @default(0)
+  enabled        Boolean        @default(true)
+  created_at     DateTime       @default(now())
+  updated_at     DateTime       @updatedAt
+
+  process_logs   ReconProcessLog[]
+
+  @@index([rule_type, enabled])
+  @@index([priority])
+  @@map("recon_rules")
+}
+
+model ReconProcessLog {
+  id          String             @id @default(uuid())
+  batch_id    String             @map("batch_id")
+  detail_id   String?            @map("detail_id")
+  ticket_id   String?            @map("ticket_id")
+  action      String
+  action_data String             @map("action_data")
+  rule_id     String?            @map("rule_id")
+  created_at  DateTime           @default(now())
+
+  batch       ReconciliationBatch   @relation(fields: [batch_id], references: [id])
+  detail      ReconciliationDetail? @relation(fields: [detail_id], references: [id])
+  ticket      ExceptionTicket?      @relation(fields: [ticket_id], references: [id])
+  rule        ReconRule?            @relation(fields: [rule_id], references: [id])
+
+  @@index([batch_id, created_at])
+  @@index([detail_id, created_at])
+  @@index([ticket_id, created_at])
+  @@map("recon_process_logs")
+}
+
 
 // ─── 上传文件记录 ───────────────────────────────────────────────────────────
 
@@ -384,3 +465,4 @@ model UploadedFile {
   @@index([session_id])
   @@index([merchant_id])
 }
+
