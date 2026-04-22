@@ -27,6 +27,124 @@ function err(code: number, message: string) {
   return { code, message, data: null as unknown };
 }
 
+function normalizeTemplateFieldConfig(config: any): Array<{
+  header: string;
+  field: string;
+  type?: string;
+}> {
+  if (Array.isArray(config?.fields)) {
+    return config.fields
+      .filter((item: any) => item?.header && item?.field)
+      .map((item: any) => ({
+        header: String(item.header),
+        field: String(item.field),
+        type: item.type ? String(item.type) : undefined,
+      }));
+  }
+
+  const fieldMapping =
+    config?.fieldMapping && typeof config.fieldMapping === 'object' ? config.fieldMapping : {};
+
+  return Object.entries(fieldMapping).map(([header, field]) => ({
+    header: String(header),
+    field: String(field),
+  }));
+}
+
+function parseAmountByType(value: unknown, type?: string, amountUnit?: string): number {
+  if (value === null || value === undefined || value === '') {
+    return 0;
+  }
+
+  const raw = String(value).replace(/[%￥¥,\s，]/g, '').trim();
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+
+  if (type === 'amount') {
+    if (amountUnit === 'fen') {
+      return Math.round(parsed);
+    }
+    return Math.round(parsed * 100);
+  }
+
+  return parsed;
+}
+
+function parseDateValue(value: unknown): string | undefined {
+  if (value === null || value === undefined || value === '') {
+    return undefined;
+  }
+
+  const text = String(value).trim();
+  const match = text.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/);
+  if (match) {
+    const [, year, month, day] = match;
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
+
+  const numeric = Number(text);
+  if (Number.isFinite(numeric) && numeric > 25569) {
+    const epoch = new Date(Math.round((numeric - 25569) * 86400 * 1000));
+    return epoch.toISOString().slice(0, 10);
+  }
+
+  return text || undefined;
+}
+
+function mapRowsWithTemplate(
+  headers: string[],
+  rows: string[][],
+  fieldConfig: any,
+): any[] {
+  const mappings = normalizeTemplateFieldConfig(fieldConfig);
+  const amountUnit = fieldConfig?.amountUnit === 'fen' ? 'fen' : 'yuan';
+
+  return rows
+    .map((row) => {
+      const record: Record<string, unknown> = {};
+
+      mappings.forEach((mapping) => {
+        const columnIndex = headers.findIndex((header) => String(header).trim() === mapping.header);
+        if (columnIndex < 0) {
+          return;
+        }
+
+        const rawValue = row[columnIndex];
+        if (mapping.type === 'amount') {
+          record[mapping.field] = parseAmountByType(rawValue, mapping.type, amountUnit);
+          return;
+        }
+
+        if (mapping.type === 'date') {
+          record[mapping.field] = parseDateValue(rawValue);
+          return;
+        }
+
+        record[mapping.field] = rawValue === undefined || rawValue === null ? undefined : String(rawValue).trim();
+      });
+
+      return {
+        order_no: String(record.order_no || '').trim(),
+        order_type: String(record.order_type || '').trim(),
+        pay_method: String(record.pay_method || '').trim(),
+        channel_name: String(record.channel_name || '').trim(),
+        customer_phone: record.customer_phone ? String(record.customer_phone).trim() : undefined,
+        customer_name: record.customer_name ? String(record.customer_name).trim() : undefined,
+        order_amount: Number(record.order_amount || 0),
+        received_amount: Number(record.received_amount || 0),
+        paid_amount: Number(record.paid_amount || 0),
+        channel_fee: Number(record.channel_fee || 0),
+        order_status: String(record.order_status || '').trim(),
+        pay_serial_no: record.pay_serial_no ? String(record.pay_serial_no).trim() : undefined,
+        orig_serial_no: record.orig_serial_no ? String(record.orig_serial_no).trim() : undefined,
+        trans_date: record.trans_date ? String(record.trans_date).trim() : undefined,
+      };
+    })
+    .filter((record) => record.order_no && record.order_amount !== undefined);
+}
+
 /** 浠庤姹備腑鎻愬彇 merchantId锛堟敮鎸?header銆乵ultipart field銆丣SON body锛?*/
 function extractMerchantId(request: any): string | undefined {
   // 1. Header x-merchant-id
@@ -141,14 +259,36 @@ export function createFileRoutes(processor: FileProcessor): FastifyPluginAsync {
         return reply.status(400).send(err(1, 'empty file content'));
       }
 
+      const prisma = processor.getPrisma();
+      if (!prisma) {
+        return reply.status(500).send(err(1, 'template import is not configured'));
+      }
+
+      const template = await prisma.billTemplate.findUnique({ where: { id: templateId } });
+      if (!template) {
+        return reply.status(404).send(err(1, 'template not found'));
+      }
+
       const ext = filename.toLowerCase().split('.').pop();
       const content = ext === 'xlsx' || ext === 'xls' ? '' : buffer.toString('utf-8');
-      const result = await processor.processBuffer(
-        content,
+
+      let parsedData;
+      try {
+        parsedData =
+          ext === 'xlsx' || ext === 'xls'
+            ? parseExcelBuffer(buffer)
+            : parseFileContent(content, filename);
+      } catch (parseError) {
+        return reply.status(400).send(err(1, `failed to parse file: ${(parseError as Error).message}`));
+      }
+
+      const fieldConfig = JSON.parse(template.field_config || '{}');
+      const records = mapRowsWithTemplate(parsedData.headers || [], parsedData.rows || [], fieldConfig);
+      const result = await processor.saveImportedBusinessOrders(
         filename,
+        records,
         'upload',
-        'BUSINESS_ORDER',
-        buffer,
+        parsedData.headers || [],
         merchantId,
       );
 

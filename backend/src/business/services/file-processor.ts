@@ -72,6 +72,10 @@ export class FileProcessor {
     this.settlementRepo = new SettlementRepository(prisma);
   }
 
+  getPrisma(): PrismaClient | null {
+    return this.prisma;
+  }
+
   async processBuffer(
     content: string,
     filename: string,
@@ -186,6 +190,67 @@ export class FileProcessor {
 
   async processFile(content: string, filename: string, source: FileSource): Promise<ProcessResult> {
     return this.processBuffer(content, filename, source);
+  }
+
+  async saveImportedBusinessOrders(
+    filename: string,
+    records: any[],
+    source: FileSource,
+    headers: string[] = [],
+    merchantId?: string,
+  ): Promise<ProcessResult> {
+    if (!records.length) {
+      return { success: false, records: 0, error: 'No valid records generated from template' };
+    }
+
+    const sourceDetection = detectSource(filename, headers);
+    const fileId = `BUSINESS_ORDER_${Date.now()}`;
+    let savedCount = records.length;
+
+    try {
+      if (this.prisma) {
+        savedCount = await this.saveRecords('BUSINESS_ORDER', records, fileId, merchantId);
+        await this.saveFileRecord({
+          fileId,
+          filename,
+          fileType: 'BUSINESS_ORDER',
+          source,
+          sourceLabel: sourceDetection.source_label,
+          sourceKind: sourceDetection.source_kind,
+          recordCount: savedCount,
+          merchantId,
+          headersJson: headers.length > 0 ? JSON.stringify(headers) : null,
+        });
+      }
+    } catch (error) {
+      return {
+        success: false,
+        records: 0,
+        error: (error as Error).message || 'Save business orders failed',
+      };
+    }
+
+    this.files.set(fileId, {
+      id: fileId,
+      filename,
+      type: 'BUSINESS_ORDER',
+      source,
+      records: savedCount,
+      createdAt: new Date().toISOString(),
+      source_label: sourceDetection.source_label,
+      source_kind: sourceDetection.source_kind,
+    });
+
+    this.fileRecords.set(fileId, records);
+
+    return {
+      success: true,
+      records: savedCount,
+      type: 'BUSINESS_ORDER',
+      fileId,
+      source_label: sourceDetection.source_label,
+      source_kind: sourceDetection.source_kind,
+    };
   }
 
   listFiles(opts: ListFilesOptions): { items: FileMeta[]; total: number } {
