@@ -27,11 +27,7 @@ export const fileApi = {
       formData.append('file_type', fileType);
     }
 
-    const response = await api.post<ApiResponse<FileUploadResult>>('/files/upload', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
+    const response = await api.post<ApiResponse<FileUploadResult>>('/files/upload', formData);
 
     return response.data.data;
   },

@@ -12,6 +12,15 @@ const api = axios.create({
 
 api.interceptors.request.use(
   (config) => {
+    if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+      if (config.headers && 'Content-Type' in config.headers) {
+        delete config.headers['Content-Type'];
+      }
+      if (config.headers && 'content-type' in config.headers) {
+        delete config.headers['content-type'];
+      }
+    }
+
     const token = useAuthStore.getState().token;
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
