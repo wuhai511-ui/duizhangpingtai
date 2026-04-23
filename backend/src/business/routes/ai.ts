@@ -101,7 +101,7 @@ function applyChannelPrimaryKeyOverride(
   channelPrimaryKey?: string,
 ): ReconTemplate | null {
   const normalizedKey = String(channelPrimaryKey || '').trim();
-  if (!template || !normalizedKey || batchType !== 'ORDER_VS_JY') {
+  if (!template || batchType !== 'ORDER_VS_JY') {
     return template;
   }
 
@@ -112,14 +112,18 @@ function applyChannelPrimaryKeyOverride(
   if (nextPrimaryKeys.length === 0) {
     nextPrimaryKeys.push({
       mode: 'exact',
-      business_field: 'orig_serial_no',
-      channel_field: normalizedKey,
+      business_field: 'order_no',
+      channel_field: normalizedKey || 'merchant_order_no',
       weight: 100,
     });
   } else {
     nextPrimaryKeys[0] = {
       ...nextPrimaryKeys[0],
-      channel_field: normalizedKey,
+      business_field:
+        !nextPrimaryKeys[0].business_field || nextPrimaryKeys[0].business_field === 'orig_serial_no'
+          ? 'order_no'
+          : nextPrimaryKeys[0].business_field,
+      channel_field: normalizedKey || nextPrimaryKeys[0].channel_field || 'merchant_order_no',
     };
   }
 

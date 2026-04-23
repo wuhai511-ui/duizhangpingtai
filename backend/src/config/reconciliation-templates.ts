@@ -136,7 +136,7 @@ export const DEFAULT_RECON_TEMPLATES: Record<string, ReconTemplate> = {
     primary_keys: [
       {
         mode: 'exact',
-        business_field: 'orig_serial_no',
+        business_field: 'order_no',
         channel_field: 'merchant_order_no',
         weight: 100,
       },
@@ -229,7 +229,7 @@ export const DEFAULT_RECON_TEMPLATES: Record<string, ReconTemplate> = {
     primary_keys: [
       {
         mode: 'exact',
-        business_field: 'orig_serial_no',
+        business_field: 'order_no',
         channel_field: 'merchant_order_no',
         weight: 100,
       },
