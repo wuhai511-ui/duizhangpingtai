@@ -136,6 +136,16 @@ const ReconciliationTemplatesPage: React.FC = () => {
     setOpen(true);
   };
 
+  const openClone = (item: ReconTemplateConfigItem) => {
+    setEditing(null);
+    form.setFieldsValue({
+      ...item.template,
+      name: `${item.template.name}_自定义`,
+    } as any);
+    setIsDefault(item.is_default);
+    setOpen(true);
+  };
+
   const onSave = async () => {
     const values = (await form.validateFields()) as ReconTemplateConfig;
     const payload = {
@@ -213,7 +223,11 @@ const ReconciliationTemplatesPage: React.FC = () => {
               width: 180,
               render: (_: any, row: ReconTemplateConfigItem) => (
                 <Space>
-                  {!row.readonly && (
+                  {row.readonly ? (
+                    <Button type="link" size="small" onClick={() => openClone(row)}>
+                      复制并编辑
+                    </Button>
+                  ) : (
                     <>
                       <Button type="link" size="small" onClick={() => openEdit(row)}>
                         编辑
