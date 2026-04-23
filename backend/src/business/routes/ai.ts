@@ -95,6 +95,40 @@ async function resolveReconTemplate(
   return getDefaultTemplateByBatchType(batchType);
 }
 
+function applyChannelPrimaryKeyOverride(
+  template: ReconTemplate | null,
+  batchType: BatchType,
+  channelPrimaryKey?: string,
+): ReconTemplate | null {
+  const normalizedKey = String(channelPrimaryKey || '').trim();
+  if (!template || !normalizedKey || batchType !== 'ORDER_VS_JY') {
+    return template;
+  }
+
+  const nextPrimaryKeys = Array.isArray(template.primary_keys)
+    ? [...template.primary_keys]
+    : [];
+
+  if (nextPrimaryKeys.length === 0) {
+    nextPrimaryKeys.push({
+      mode: 'exact',
+      business_field: 'orig_serial_no',
+      channel_field: normalizedKey,
+      weight: 100,
+    });
+  } else {
+    nextPrimaryKeys[0] = {
+      ...nextPrimaryKeys[0],
+      channel_field: normalizedKey,
+    };
+  }
+
+  return {
+    ...template,
+    primary_keys: nextPrimaryKeys,
+  };
+}
+
 export const aiRoutes: FastifyPluginAsync = async (fastify) => {
   /** AI 自然语言查询 */
   fastify.post('/ai/query', async (request, reply) => {
@@ -656,11 +690,16 @@ export const createAiReconcileRoutes = (
         batch.batch_type as BatchType,
         body.template_id as string | undefined,
       );
+      const templateWithPrimaryKey = applyChannelPrimaryKeyOverride(
+        template,
+        batch.batch_type as BatchType,
+        body.channel_primary_key as string | undefined,
+      );
       const result = engine.reconcile(
         businessData,
         channelData,
         batch.batch_type as any,
-        template ? { template } : {},
+        templateWithPrimaryKey ? { template: templateWithPrimaryKey } : {},
       );
 
       // ??????

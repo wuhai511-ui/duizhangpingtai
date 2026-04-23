@@ -50,6 +50,7 @@ interface UploadedAttachment {
   source_label?: string;
   source_kind?: string;
   detection_confidence?: number;
+  channel_primary_key?: string;
 }
 
 interface PendingFileInsight {
@@ -96,6 +97,14 @@ const FILE_TYPE_OPTIONS: Array<{ label: string; value: UploadFileType }> = [
   { label: FILE_TYPE_LABELS.SEP, value: 'SEP' },
 ];
 
+const CHANNEL_PRIMARY_KEY_OPTIONS: Array<{ label: string; value: string }> = [
+  { label: 'merchant_order_no', value: 'merchant_order_no' },
+  { label: 'lakala_serial', value: 'lakala_serial' },
+  { label: 'pay_order_no', value: 'pay_order_no' },
+  { label: 'external_serial', value: 'external_serial' },
+  { label: 'sys_ref_no', value: 'sys_ref_no' },
+];
+
 const QUICK_QUESTIONS = [
   '今天交易总额多少？',
   '今天交易笔数多少？',
@@ -115,6 +124,7 @@ function toUploadedAttachment(item: {
   source_label?: string;
   source_kind?: string;
   detection_confidence?: number;
+  channel_primary_key?: string;
 }): UploadedAttachment | null {
   const type = item.type as UploadFileType;
   if (!ALLOWED_FILE_TYPES.includes(type)) {
@@ -137,6 +147,7 @@ function toUploadedAttachment(item: {
       typeof item.detection_confidence === 'number'
         ? item.detection_confidence
         : fallbackSource?.confidence,
+    channel_primary_key: item.channel_primary_key,
   };
 }
 
@@ -212,6 +223,8 @@ function extractUploadedFiles(messages: AIConversationMessage[]): UploadedAttach
           source_kind: 'source_kind' in item ? String(item.source_kind || '') : undefined,
           detection_confidence:
             'detection_confidence' in item ? Number(item.detection_confidence || 0) : undefined,
+          channel_primary_key:
+            'channel_primary_key' in item ? String(item.channel_primary_key || '') : undefined,
         });
 
         if (attachment) {
@@ -281,6 +294,8 @@ const AIQuery: React.FC = () => {
   const [pendingBusinessFile, setPendingBusinessFile] = useState<File | null>(null);
   const [selectedBusinessFileId, setSelectedBusinessFileId] = useState<string>();
   const [selectedChannelFileId, setSelectedChannelFileId] = useState<string>();
+  const [pendingChannelPrimaryKey, setPendingChannelPrimaryKey] = useState<string>('merchant_order_no');
+  const [channelPrimaryKeyByFileId, setChannelPrimaryKeyByFileId] = useState<Record<string, string>>({});
 
   const conversationsQuery = useQuery({
     queryKey: ['ai-conversations'],
@@ -307,6 +322,7 @@ const AIQuery: React.FC = () => {
             source_label: item.source_label,
             source_kind: item.source_kind,
             detection_confidence: item.detection_confidence,
+            channel_primary_key: (item as { channel_primary_key?: string }).channel_primary_key,
           }),
         )
         .filter(Boolean) as UploadedAttachment[];
@@ -585,7 +601,11 @@ const AIQuery: React.FC = () => {
   });
 
   const uploadMutation = useMutation({
-    mutationFn: async (payload: { files: File[]; fileType: UploadFileType }) => {
+    mutationFn: async (payload: {
+      files: File[];
+      fileType: UploadFileType;
+      channelPrimaryKey?: string;
+    }) => {
       const results: UploadedAttachment[] = [];
 
       for (const file of payload.files) {
@@ -603,6 +623,8 @@ const AIQuery: React.FC = () => {
             typeof result.detection_confidence === 'number'
               ? result.detection_confidence
               : insight?.confidence,
+          channel_primary_key:
+            payload.fileType === 'JY' ? payload.channelPrimaryKey : undefined,
         });
       }
 
@@ -621,6 +643,18 @@ const AIQuery: React.FC = () => {
       }
       if (latestChannel) {
         setSelectedChannelFileId(latestChannel.file_id);
+      }
+      const channelKeyPairs = items
+        .filter((item) => item.type === 'JY' && item.channel_primary_key)
+        .map((item) => [item.file_id, String(item.channel_primary_key)] as const);
+      if (channelKeyPairs.length > 0) {
+        setChannelPrimaryKeyByFileId((prev) => {
+          const next = { ...prev };
+          channelKeyPairs.forEach(([fileId, key]) => {
+            next[fileId] = key;
+          });
+          return next;
+        });
       }
 
       if (selectedConversationId === 'legacy') {
@@ -644,6 +678,7 @@ const AIQuery: React.FC = () => {
       setUploadModalVisible(false);
       setPendingFiles([]);
       setPendingInsights({});
+      setPendingChannelPrimaryKey('merchant_order_no');
     },
     onError: (error) => {
       messageApi.error(`上传失败：${(error as Error).message}`);
@@ -676,10 +711,14 @@ const AIQuery: React.FC = () => {
         throw new Error('渠道方文件没有有效记录，请检查内容后重新上传');
       }
 
+      const channelPrimaryKey =
+        channelFile.channel_primary_key || channelPrimaryKeyByFileId[channelFile.file_id];
+
       return aiApi.reconcileInConversation(selectedConversationId, {
         business_file_id: businessFile.file_id,
         channel_file_id: channelFile.file_id,
         batch_type: 'ORDER_VS_JY',
+        channel_primary_key: channelPrimaryKey,
       });
     },
     onSuccess: async (result: ConversationReconcileResult) => {
@@ -733,7 +772,16 @@ const AIQuery: React.FC = () => {
       return;
     }
 
-    uploadMutation.mutate({ files, fileType: selectedFileType });
+    if (selectedFileType === 'JY' && !pendingChannelPrimaryKey) {
+      messageApi.warning('璇烽€夋嫨娓犻亾鏂囦欢涓婚敭瀛楁');
+      return;
+    }
+
+    uploadMutation.mutate({
+      files,
+      fileType: selectedFileType,
+      channelPrimaryKey: selectedFileType === 'JY' ? pendingChannelPrimaryKey : undefined,
+    });
   };
 
   const handleMappingSubmit = (payload: {
@@ -1057,6 +1105,16 @@ const AIQuery: React.FC = () => {
             options={FILE_TYPE_OPTIONS}
             style={{ width: '100%' }}
           />
+
+          {selectedFileType === 'JY' ? (
+            <Select
+              value={pendingChannelPrimaryKey}
+              onChange={setPendingChannelPrimaryKey}
+              options={CHANNEL_PRIMARY_KEY_OPTIONS}
+              style={{ width: '100%' }}
+              placeholder="channel primary key"
+            />
+          ) : null}
 
           <Upload
             multiple={selectedFileType !== 'BUSINESS_ORDER'}

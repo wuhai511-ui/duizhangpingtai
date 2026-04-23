@@ -166,6 +166,7 @@ export interface ReconcileRequest {
   channel_file_id?: string;
   batch_type?: 'ORDER_VS_JY' | 'JY_VS_JS';
   check_date?: string;
+  channel_primary_key?: string;
 }
 
 export interface ReconcileStats {

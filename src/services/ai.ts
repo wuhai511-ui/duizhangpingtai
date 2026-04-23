@@ -139,6 +139,7 @@ export const aiApi = {
         source_label?: string;
         source_kind?: string;
         detection_confidence?: number;
+        channel_primary_key?: string;
       }>;
     },
   ): Promise<AIConversationMessage> => {
