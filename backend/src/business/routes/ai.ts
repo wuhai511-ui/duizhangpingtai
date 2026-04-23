@@ -133,6 +133,23 @@ function applyChannelPrimaryKeyOverride(
   };
 }
 
+function extractPrimaryKeyConfig(template: ReconTemplate | null): {
+  business_field: string;
+  channel_field: string;
+  mode: string;
+} | null {
+  if (!template || !Array.isArray(template.primary_keys) || template.primary_keys.length === 0) {
+    return null;
+  }
+  const first = template.primary_keys[0];
+  if (!first?.business_field || !first?.channel_field) return null;
+  return {
+    business_field: String(first.business_field),
+    channel_field: String(first.channel_field),
+    mode: String(first.mode || 'exact'),
+  };
+}
+
 export const aiRoutes: FastifyPluginAsync = async (fastify) => {
   /** AI 自然语言查询 */
   fastify.post('/ai/query', async (request, reply) => {
@@ -607,6 +624,7 @@ export const createAiReconcileRoutes = (
   prisma: {
     reconciliationBatch: { create: Function; findMany: Function; update: Function };
     reconciliationDetail: { create: Function };
+    reconProcessLog: { create: Function };
     businessOrder: { findMany: Function };
     jyTransaction: { findMany: Function };
     jsSettlement: { findMany: Function };
@@ -699,6 +717,19 @@ export const createAiReconcileRoutes = (
         batch.batch_type as BatchType,
         body.channel_primary_key as string | undefined,
       );
+      const primaryKeyConfig = extractPrimaryKeyConfig(templateWithPrimaryKey);
+      if (primaryKeyConfig) {
+        await prisma.reconProcessLog.create({
+          data: {
+            batch_id: batch.id,
+            action: 'BATCH_MATCH_KEY_USED',
+            action_data: JSON.stringify({
+              ...primaryKeyConfig,
+              source: 'template',
+            }),
+          },
+        });
+      }
       const result = engine.reconcile(
         businessData,
         channelData,
@@ -719,6 +750,13 @@ export const createAiReconcileRoutes = (
             match_date: detail.match_date || null,
             business_data: null,
             channel_data: null,
+            remark:
+              detail.match_key || detail.match_mode
+                ? JSON.stringify({
+                    match_key: detail.match_key || null,
+                    match_mode: detail.match_mode || null,
+                  })
+                : null,
           },
         });
       }

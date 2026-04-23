@@ -35,6 +35,22 @@ export const reconciliationApi = {
     return response.data.data;
   },
 
+  updateBatchMatchKey: async (
+    id: string,
+    payload: {
+      business_field: string;
+      channel_field: string;
+      mode?: 'exact' | 'prefix' | 'suffix' | 'regex' | 'fuzzy' | 'contains';
+      rerun?: boolean;
+    },
+  ): Promise<{ batch_id: string; stats?: any; match_key_config?: any }> => {
+    const response = await api.post<ApiResponse<{ batch_id: string; stats?: any; match_key_config?: any }>>(
+      `/reconciliation/batches/${id}/match-key`,
+      payload,
+    );
+    return response.data.data;
+  },
+
   listTemplateConfigs: async (batchType?: ReconBatchType): Promise<ReconTemplateConfigItem[]> => {
     const response = await api.get<ApiResponse<ReconTemplateConfigItem[]>>(
       '/reconciliation/template-configs',

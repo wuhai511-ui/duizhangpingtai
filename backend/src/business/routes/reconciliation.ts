@@ -91,6 +91,89 @@ function buildBatchWhere(fileId?: string | null, checkDate?: string | null) {
   return null;
 }
 
+interface MatchKeyConfig {
+  business_field: string;
+  channel_field: string;
+  mode: string;
+  source: 'manual' | 'template';
+}
+
+function applyPrimaryKeyOverride(
+  template: ReconTemplate | null,
+  override: {
+    business_field?: string;
+    channel_field?: string;
+    mode?: string;
+  },
+): ReconTemplate | null {
+  if (!template) return template;
+  const businessField = String(override.business_field || '').trim();
+  const channelField = String(override.channel_field || '').trim();
+  const mode = String(override.mode || '').trim() || 'exact';
+  if (!businessField || !channelField) return template;
+
+  const nextPrimaryKeys = Array.isArray(template.primary_keys)
+    ? [...template.primary_keys]
+    : [];
+  if (nextPrimaryKeys.length === 0) {
+    nextPrimaryKeys.push({
+      business_field: businessField,
+      channel_field: channelField,
+      mode: mode as any,
+      weight: 100,
+    });
+  } else {
+    nextPrimaryKeys[0] = {
+      ...nextPrimaryKeys[0],
+      business_field: businessField,
+      channel_field: channelField,
+      mode: mode as any,
+    };
+  }
+
+  return {
+    ...template,
+    primary_keys: nextPrimaryKeys,
+  };
+}
+
+function extractMatchKeyFromTemplate(template: ReconTemplate | null): MatchKeyConfig | null {
+  if (!template || !Array.isArray(template.primary_keys) || template.primary_keys.length === 0) {
+    return null;
+  }
+  const first = template.primary_keys[0];
+  if (!first?.business_field || !first?.channel_field) return null;
+  return {
+    business_field: String(first.business_field),
+    channel_field: String(first.channel_field),
+    mode: String(first.mode || 'exact'),
+    source: 'template',
+  };
+}
+
+async function getBatchMatchKeyConfig(batchId: string, batchType: BatchType): Promise<MatchKeyConfig | null> {
+  const latestManual = await prisma.reconProcessLog.findFirst({
+    where: { batch_id: batchId, action: 'BATCH_MATCH_KEY_SET' },
+    orderBy: { created_at: 'desc' },
+  });
+  if (latestManual?.action_data) {
+    try {
+      const parsed = JSON.parse(latestManual.action_data) as Partial<MatchKeyConfig>;
+      if (parsed.business_field && parsed.channel_field) {
+        return {
+          business_field: String(parsed.business_field),
+          channel_field: String(parsed.channel_field),
+          mode: String(parsed.mode || 'exact'),
+          source: 'manual',
+        };
+      }
+    } catch {}
+  }
+
+  const template = await resolveReconTemplate(batchType);
+  return extractMatchKeyFromTemplate(template);
+}
+
 async function loadBatchData(batch: {
   batch_type: string;
   business_file_id?: string | null;
@@ -203,13 +286,24 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.status(404).send(err(4, 'Batch not found'));
     }
 
-    return ok({ ...batch, total_amount: batch.total_amount.toString() });
+    const matchKeyConfig = await getBatchMatchKeyConfig(id, batch.batch_type as BatchType);
+
+    return ok({
+      ...batch,
+      total_amount: batch.total_amount.toString(),
+      match_key_config: matchKeyConfig,
+    });
   });
 
   /** 执行对账 */
   fastify.post('/reconciliation/batches/:id/execute', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const body = (request.body as { template_id?: string } | undefined) || {};
+    const body = (request.body as {
+      template_id?: string;
+      business_field?: string;
+      channel_field?: string;
+      mode?: string;
+    } | undefined) || {};
 
     const batch = await prisma.reconciliationBatch.findUnique({
       where: { id },
@@ -233,11 +327,26 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
       const { businessData, channelData } = await loadBatchData(batch);
 
       const template = await resolveReconTemplate(batch.batch_type as BatchType, body.template_id);
+      const templateWithOverride = applyPrimaryKeyOverride(template, {
+        business_field: body.business_field,
+        channel_field: body.channel_field,
+        mode: body.mode,
+      });
+      const usedMatchKey = extractMatchKeyFromTemplate(templateWithOverride);
+      if (usedMatchKey) {
+        await prisma.reconProcessLog.create({
+          data: {
+            batch_id: id,
+            action: 'BATCH_MATCH_KEY_USED',
+            action_data: JSON.stringify(usedMatchKey),
+          },
+        });
+      }
       const result = engine.reconcile(
         businessData,
         channelData,
         batch.batch_type as any,
-        template ? { template } : {},
+        templateWithOverride ? { template: templateWithOverride } : {},
       );
 
       // 保存对账明细
@@ -255,6 +364,13 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
             match_date: detail.match_date || null,
             business_data: detail.business_data || null,
             channel_data: detail.channel_data || null,
+            remark:
+              detail.match_key || detail.match_mode
+                ? JSON.stringify({
+                    match_key: detail.match_key || null,
+                    match_mode: detail.match_mode || null,
+                  })
+                : null,
           },
         });
       }
@@ -327,18 +443,36 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
       }),
     ]);
 
-    return ok(items.map((item: any) => ({
-      ...item,
-      business_amount: item.business_amount?.toString(),
-      channel_amount: item.channel_amount?.toString(),
-      diff_amount: item.diff_amount?.toString(),
-    })), { page, pageSize, total });
+    return ok(
+      items.map((item: any) => {
+        let matchMeta: { match_key?: string | null; match_mode?: string | null } = {};
+        if (item.remark) {
+          try {
+            matchMeta = JSON.parse(item.remark);
+          } catch {}
+        }
+        return {
+          ...item,
+          business_amount: item.business_amount?.toString(),
+          channel_amount: item.channel_amount?.toString(),
+          diff_amount: item.diff_amount?.toString(),
+          match_key: matchMeta.match_key || null,
+          match_mode: matchMeta.match_mode || null,
+        };
+      }),
+      { page, pageSize, total },
+    );
   });
 
   /** 对账批次重新执行 */
   fastify.post('/reconciliation/batches/:id/rerun', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const body = request.body as { template_id?: string };
+    const body = request.body as {
+      template_id?: string;
+      business_field?: string;
+      channel_field?: string;
+      mode?: string;
+    };
 
     // 获取批次
     const batch = await prisma.reconciliationBatch.findUnique({
@@ -359,11 +493,26 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
     try {
       const { businessData, channelData } = await loadBatchData(batch);
       const template = await resolveReconTemplate(batch.batch_type as BatchType, body.template_id);
+      const templateWithOverride = applyPrimaryKeyOverride(template, {
+        business_field: body.business_field,
+        channel_field: body.channel_field,
+        mode: body.mode,
+      });
+      const usedMatchKey = extractMatchKeyFromTemplate(templateWithOverride);
+      if (usedMatchKey) {
+        await prisma.reconProcessLog.create({
+          data: {
+            batch_id: id,
+            action: 'BATCH_MATCH_KEY_USED',
+            action_data: JSON.stringify(usedMatchKey),
+          },
+        });
+      }
       const result = engine.reconcile(
         businessData,
         channelData,
         batch.batch_type as any,
-        template ? { template } : {},
+        templateWithOverride ? { template: templateWithOverride } : {},
       );
 
       // 清除旧明细
@@ -386,6 +535,13 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
             match_date: detail.match_date || null,
             business_data: detail.business_data || null,
             channel_data: detail.channel_data || null,
+            remark:
+              detail.match_key || detail.match_mode
+                ? JSON.stringify({
+                    match_key: detail.match_key || null,
+                    match_mode: detail.match_mode || null,
+                  })
+                : null,
           },
         });
       }
@@ -435,6 +591,62 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
       });
       return reply.status(500).send(err(3, (error as Error).message));
     }
+  });
+
+  /** 修改批次主键并可选择立即重跑 */
+  fastify.post('/reconciliation/batches/:id/match-key', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = (request.body as {
+      business_field?: string;
+      channel_field?: string;
+      mode?: string;
+      rerun?: boolean;
+    } | undefined) || {};
+
+    const batch = await prisma.reconciliationBatch.findUnique({ where: { id } });
+    if (!batch) {
+      return reply.status(404).send(err(4, 'Batch not found'));
+    }
+
+    const businessField = String(body.business_field || '').trim();
+    const channelField = String(body.channel_field || '').trim();
+    const mode = String(body.mode || 'exact').trim() || 'exact';
+    if (!businessField || !channelField) {
+      return reply.status(400).send(err(1, 'business_field and channel_field are required'));
+    }
+
+    const matchKeyConfig: MatchKeyConfig = {
+      business_field: businessField,
+      channel_field: channelField,
+      mode,
+      source: 'manual',
+    };
+    await prisma.reconProcessLog.create({
+      data: {
+        batch_id: id,
+        action: 'BATCH_MATCH_KEY_SET',
+        action_data: JSON.stringify(matchKeyConfig),
+      },
+    });
+
+    if (body.rerun === false) {
+      return ok({ batch_id: id, match_key_config: matchKeyConfig, rerun: false });
+    }
+
+    const rerunResp = await fastify.inject({
+      method: 'POST',
+      url: `/api/v1/reconciliation/batches/${id}/rerun`,
+      payload: {
+        business_field: businessField,
+        channel_field: channelField,
+        mode,
+      },
+    });
+
+    if (rerunResp.statusCode >= 400) {
+      return reply.status(rerunResp.statusCode).send(rerunResp.json());
+    }
+    return rerunResp.json();
   });
 
   /** 导出报告 */

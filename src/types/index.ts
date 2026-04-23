@@ -201,6 +201,12 @@ export interface ReconciliationBatch {
   amount_diff_count?: number | null;
   status: number;
   error_msg?: string | null;
+  match_key_config?: {
+    business_field: string;
+    channel_field: string;
+    mode: string;
+    source?: 'manual' | 'template';
+  } | null;
   started_at?: string;
   finished_at?: string | null;
 }
@@ -214,6 +220,8 @@ export interface ReconciliationDetailItem {
   channel_amount?: string | null;
   diff_amount?: string | null;
   match_date?: string | null;
+  match_key?: string | null;
+  match_mode?: string | null;
   business_data?: string | null;
   channel_data?: string | null;
   created_at?: string;
