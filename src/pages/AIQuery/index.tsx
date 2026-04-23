@@ -320,6 +320,7 @@ const AIQuery: React.FC = () => {
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>();
   const [pendingChannelPrimaryKey, setPendingChannelPrimaryKey] = useState<string>('merchant_order_no');
   const [pendingChannelAmountUnit, setPendingChannelAmountUnit] = useState<'fen' | 'yuan'>('yuan');
+  const [pendingChannelAmountUnitConfirmed, setPendingChannelAmountUnitConfirmed] = useState(false);
   const [channelPrimaryKeyByFileId, setChannelPrimaryKeyByFileId] = useState<Record<string, string>>({});
   const [channelAmountUnitByFileId, setChannelAmountUnitByFileId] = useState<
     Record<string, 'fen' | 'yuan'>
@@ -517,6 +518,7 @@ const AIQuery: React.FC = () => {
           const firstInsight = Object.values(nextInsights).find(Boolean);
           if (firstInsight) {
             setPendingChannelAmountUnit(getSuggestedAmountUnit(firstInsight.sourceKind));
+            setPendingChannelAmountUnitConfirmed(false);
           }
         }
       }
@@ -528,6 +530,12 @@ const AIQuery: React.FC = () => {
       cancelled = true;
     };
   }, [pendingFiles, selectedFileType, uploadModalVisible]);
+
+  useEffect(() => {
+    if (selectedFileType === 'JY') {
+      setPendingChannelAmountUnitConfirmed(false);
+    }
+  }, [selectedFileType]);
 
   const createConversationMutation = useMutation({
     mutationFn: (title?: string) => aiApi.createConversation(title ? { title } : {}),
@@ -783,6 +791,7 @@ const AIQuery: React.FC = () => {
       setPendingInsights({});
       setPendingChannelPrimaryKey('merchant_order_no');
       setPendingChannelAmountUnit('yuan');
+      setPendingChannelAmountUnitConfirmed(false);
     },
     onError: (error) => {
       messageApi.error(`上传失败：${(error as Error).message}`);
@@ -886,6 +895,10 @@ const AIQuery: React.FC = () => {
     }
     if (selectedFileType === 'JY' && !pendingChannelAmountUnit) {
       messageApi.warning('请选择渠道交易金额单位（元/分）');
+      return;
+    }
+    if (selectedFileType === 'JY' && !pendingChannelAmountUnitConfirmed) {
+      messageApi.warning('请先确认渠道交易金额单位（元/分）');
       return;
     }
 
@@ -1261,11 +1274,21 @@ const AIQuery: React.FC = () => {
               />
               <Select
                 value={pendingChannelAmountUnit}
-                onChange={setPendingChannelAmountUnit}
+                onChange={(value) => {
+                  setPendingChannelAmountUnit(value);
+                  setPendingChannelAmountUnitConfirmed(true);
+                }}
                 options={CHANNEL_AMOUNT_UNIT_OPTIONS}
                 style={{ width: '100%' }}
                 placeholder="请选择渠道账单金额单位"
               />
+              {!pendingChannelAmountUnitConfirmed ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="请确认一次渠道交易金额单位（元/分）后再上传"
+                />
+              ) : null}
             </Space>
           ) : null}
 
