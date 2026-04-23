@@ -79,7 +79,12 @@ export class JyParser {
     '退款类型': 'pay_method',
   };
 
-  parse(content: string, filename?: string, buffer?: Buffer): ParseResult<JyTransaction> {
+  parse(
+    content: string,
+    filename?: string,
+    buffer?: Buffer,
+    options?: { amountUnit?: 'fen' | 'yuan' },
+  ): ParseResult<JyTransaction> {
     if (!content && !buffer) {
       return { success: false, records: [], error: 'Content is empty' };
     }
@@ -104,7 +109,7 @@ export class JyParser {
     const records: JyTransaction[] = [];
     for (let i = 0; i < data.rows.length; i++) {
       try {
-        const record = this.mapToRecord(data.headers, data.rows[i]);
+        const record = this.mapToRecord(data.headers, data.rows[i], options?.amountUnit);
         if (record && this.validate(record)) {
           records.push(record);
         }
@@ -121,7 +126,11 @@ export class JyParser {
     return required.every((field) => record[field as keyof JyTransaction] !== undefined && record[field as keyof JyTransaction] !== '');
   }
 
-  private mapToRecord(headers: string[], values: string[]): JyTransaction | null {
+  private mapToRecord(
+    headers: string[],
+    values: string[],
+    forcedAmountUnit?: 'fen' | 'yuan',
+  ): JyTransaction | null {
     const raw: Record<string, unknown> = {};
     const unitHints: Record<string, 'fen' | 'yuan' | undefined> = {};
 
@@ -148,9 +157,9 @@ export class JyParser {
       this.extractTime(transTimeRaw) ||
       transTimeRaw;
 
-    const amount = this.parseAmount(raw.amount, unitHints.amount);
-    const fee = this.parseAmount(raw.fee, unitHints.fee);
-    const settleAmount = this.parseAmount(raw.settle_amount, unitHints.settle_amount);
+    const amount = this.parseAmount(raw.amount, unitHints.amount, forcedAmountUnit);
+    const fee = this.parseAmount(raw.fee, unitHints.fee, forcedAmountUnit);
+    const settleAmount = this.parseAmount(raw.settle_amount, unitHints.settle_amount, forcedAmountUnit);
 
     return {
       merchant_no: String(raw.merchant_no || ''),
@@ -211,7 +220,11 @@ export class JyParser {
     return undefined;
   }
 
-  private parseAmount(value: unknown, unitHint?: 'fen' | 'yuan'): number {
+  private parseAmount(
+    value: unknown,
+    unitHint?: 'fen' | 'yuan',
+    forcedUnit?: 'fen' | 'yuan',
+  ): number {
     if (!value && value !== 0) {
       return 0;
     }
@@ -222,10 +235,12 @@ export class JyParser {
       return 0;
     }
 
-    if (unitHint === 'fen') {
+    const effectiveUnit = forcedUnit || unitHint;
+
+    if (effectiveUnit === 'fen') {
       return Math.round(num);
     }
-    if (unitHint === 'yuan') {
+    if (effectiveUnit === 'yuan') {
       return Math.round(num * 100);
     }
 

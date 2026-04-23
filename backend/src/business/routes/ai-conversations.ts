@@ -259,6 +259,10 @@ export const createAiConversationRoutes = (_prisma: PrismaClient): FastifyPlugin
         channel_primary_key: item.channel_primary_key
           ? String(item.channel_primary_key)
           : undefined,
+        channel_amount_unit:
+          item.channel_amount_unit === 'fen' || item.channel_amount_unit === 'yuan'
+            ? String(item.channel_amount_unit)
+            : undefined,
       }));
 
       if (files.length === 0) {

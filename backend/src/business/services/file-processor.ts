@@ -22,6 +22,7 @@ export interface ProcessResult {
   fileId?: string;
   source_label?: string;
   source_kind?: SourceKind;
+  channel_amount_unit?: 'fen' | 'yuan';
 }
 
 type FileSource = 'sftp' | 'upload' | 'api';
@@ -83,7 +84,8 @@ export class FileProcessor {
     source: FileSource,
     forcedFileType?: string,
     buffer?: Buffer,
-    merchantId?: string
+    merchantId?: string,
+    parseOptions?: { amountUnit?: 'fen' | 'yuan' }
   ): Promise<ProcessResult> {
     if (!content && !buffer) {
       return { success: false, records: 0, error: 'Empty file content' };
@@ -109,7 +111,13 @@ export class FileProcessor {
 
     let parseResult;
     try {
-      parseResult = parser.parse(content, filename, buffer);
+      if (fileType === 'JY') {
+        parseResult = parser.parse(content, filename, buffer, {
+          amountUnit: parseOptions?.amountUnit,
+        });
+      } else {
+        parseResult = parser.parse(content, filename, buffer);
+      }
     } catch (error) {
       return {
         success: false,
@@ -190,6 +198,7 @@ export class FileProcessor {
       fileId,
       source_label: sourceDetection.source_label,
       source_kind: sourceDetection.source_kind,
+      channel_amount_unit: fileType === 'JY' ? parseOptions?.amountUnit : undefined,
     };
   }
 

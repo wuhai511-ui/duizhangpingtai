@@ -53,6 +53,7 @@ interface UploadedAttachment {
   source_kind?: string;
   detection_confidence?: number;
   channel_primary_key?: string;
+  channel_amount_unit?: 'fen' | 'yuan';
 }
 
 interface PendingFileInsight {
@@ -107,6 +108,18 @@ const CHANNEL_PRIMARY_KEY_OPTIONS: Array<{ label: string; value: string }> = [
   { label: 'sys_ref_no', value: 'sys_ref_no' },
 ];
 
+const CHANNEL_AMOUNT_UNIT_OPTIONS: Array<{ label: string; value: 'fen' | 'yuan' }> = [
+  { label: '元（如 124.00）', value: 'yuan' },
+  { label: '分（如 12400）', value: 'fen' },
+];
+
+function getSuggestedAmountUnit(sourceKind?: string): 'fen' | 'yuan' {
+  if (sourceKind === 'lakala') {
+    return 'fen';
+  }
+  return 'yuan';
+}
+
 const QUICK_QUESTIONS = [
   '今天交易总额多少？',
   '今天交易笔数多少？',
@@ -127,6 +140,7 @@ function toUploadedAttachment(item: {
   source_kind?: string;
   detection_confidence?: number;
   channel_primary_key?: string;
+  channel_amount_unit?: 'fen' | 'yuan';
 }): UploadedAttachment | null {
   const type = item.type as UploadFileType;
   if (!ALLOWED_FILE_TYPES.includes(type)) {
@@ -150,6 +164,7 @@ function toUploadedAttachment(item: {
         ? item.detection_confidence
         : fallbackSource?.confidence,
     channel_primary_key: item.channel_primary_key,
+    channel_amount_unit: item.channel_amount_unit,
   };
 }
 
@@ -227,6 +242,12 @@ function extractUploadedFiles(messages: AIConversationMessage[]): UploadedAttach
             'detection_confidence' in item ? Number(item.detection_confidence || 0) : undefined,
           channel_primary_key:
             'channel_primary_key' in item ? String(item.channel_primary_key || '') : undefined,
+          channel_amount_unit:
+            'channel_amount_unit' in item &&
+            (String(item.channel_amount_unit || '') === 'fen' ||
+              String(item.channel_amount_unit || '') === 'yuan')
+              ? (String(item.channel_amount_unit) as 'fen' | 'yuan')
+              : undefined,
         });
 
         if (attachment) {
@@ -298,7 +319,11 @@ const AIQuery: React.FC = () => {
   const [selectedChannelFileId, setSelectedChannelFileId] = useState<string>();
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>();
   const [pendingChannelPrimaryKey, setPendingChannelPrimaryKey] = useState<string>('merchant_order_no');
+  const [pendingChannelAmountUnit, setPendingChannelAmountUnit] = useState<'fen' | 'yuan'>('yuan');
   const [channelPrimaryKeyByFileId, setChannelPrimaryKeyByFileId] = useState<Record<string, string>>({});
+  const [channelAmountUnitByFileId, setChannelAmountUnitByFileId] = useState<
+    Record<string, 'fen' | 'yuan'>
+  >({});
 
   const conversationsQuery = useQuery({
     queryKey: ['ai-conversations'],
@@ -326,6 +351,7 @@ const AIQuery: React.FC = () => {
             source_kind: item.source_kind,
             detection_confidence: item.detection_confidence,
             channel_primary_key: (item as { channel_primary_key?: string }).channel_primary_key,
+            channel_amount_unit: (item as { channel_amount_unit?: 'fen' | 'yuan' }).channel_amount_unit,
           }),
         )
         .filter(Boolean) as UploadedAttachment[];
@@ -382,6 +408,37 @@ const AIQuery: React.FC = () => {
     () => uploadedFiles.filter((item) => item.records > 0),
     [uploadedFiles],
   );
+
+  useEffect(() => {
+    const keyPairs = uploadedFiles
+      .filter((item) => item.type === 'JY' && item.channel_primary_key)
+      .map((item) => [item.file_id, String(item.channel_primary_key)] as const);
+    if (keyPairs.length > 0) {
+      setChannelPrimaryKeyByFileId((prev) => {
+        const next = { ...prev };
+        keyPairs.forEach(([fileId, key]) => {
+          next[fileId] = key;
+        });
+        return next;
+      });
+    }
+
+    const unitPairs = uploadedFiles
+      .filter(
+        (item) =>
+          item.type === 'JY' && (item.channel_amount_unit === 'fen' || item.channel_amount_unit === 'yuan'),
+      )
+      .map((item) => [item.file_id, item.channel_amount_unit as 'fen' | 'yuan'] as const);
+    if (unitPairs.length > 0) {
+      setChannelAmountUnitByFileId((prev) => {
+        const next = { ...prev };
+        unitPairs.forEach(([fileId, unit]) => {
+          next[fileId] = unit;
+        });
+        return next;
+      });
+    }
+  }, [uploadedFiles]);
 
   const selectedBusinessFile = useMemo(
     () => availableFiles.find((item) => item.file_id === selectedBusinessFileId),
@@ -456,6 +513,12 @@ const AIQuery: React.FC = () => {
 
       if (!cancelled) {
         setPendingInsights(nextInsights);
+        if (selectedFileType === 'JY') {
+          const firstInsight = Object.values(nextInsights).find(Boolean);
+          if (firstInsight) {
+            setPendingChannelAmountUnit(getSuggestedAmountUnit(firstInsight.sourceKind));
+          }
+        }
       }
     };
 
@@ -624,11 +687,14 @@ const AIQuery: React.FC = () => {
       files: File[];
       fileType: UploadFileType;
       channelPrimaryKey?: string;
+      channelAmountUnit?: 'fen' | 'yuan';
     }) => {
       const results: UploadedAttachment[] = [];
 
       for (const file of payload.files) {
-        const result: FileUploadResult = await fileApi.upload(file, payload.fileType);
+        const result: FileUploadResult = await fileApi.upload(file, payload.fileType, {
+          amountUnit: payload.fileType === 'JY' ? payload.channelAmountUnit : undefined,
+        });
         const insight = pendingInsights[getPendingFileKey(file)];
 
         results.push({
@@ -644,6 +710,8 @@ const AIQuery: React.FC = () => {
               : insight?.confidence,
           channel_primary_key:
             payload.fileType === 'JY' ? payload.channelPrimaryKey : undefined,
+          channel_amount_unit:
+            payload.fileType === 'JY' ? result.channel_amount_unit || payload.channelAmountUnit : undefined,
         });
       }
 
@@ -675,6 +743,22 @@ const AIQuery: React.FC = () => {
           return next;
         });
       }
+      const channelUnitPairs = items
+        .filter(
+          (item) =>
+            item.type === 'JY' &&
+            (item.channel_amount_unit === 'fen' || item.channel_amount_unit === 'yuan'),
+        )
+        .map((item) => [item.file_id, item.channel_amount_unit as 'fen' | 'yuan'] as const);
+      if (channelUnitPairs.length > 0) {
+        setChannelAmountUnitByFileId((prev) => {
+          const next = { ...prev };
+          channelUnitPairs.forEach(([fileId, unit]) => {
+            next[fileId] = unit;
+          });
+          return next;
+        });
+      }
 
       if (selectedConversationId === 'legacy') {
         await queryClient.invalidateQueries({ queryKey: ['ai-legacy-files'] });
@@ -698,6 +782,7 @@ const AIQuery: React.FC = () => {
       setPendingFiles([]);
       setPendingInsights({});
       setPendingChannelPrimaryKey('merchant_order_no');
+      setPendingChannelAmountUnit('yuan');
     },
     onError: (error) => {
       messageApi.error(`上传失败：${(error as Error).message}`);
@@ -732,12 +817,15 @@ const AIQuery: React.FC = () => {
 
       const channelPrimaryKey =
         channelFile.channel_primary_key || channelPrimaryKeyByFileId[channelFile.file_id];
+      const channelAmountUnit =
+        channelFile.channel_amount_unit || channelAmountUnitByFileId[channelFile.file_id];
 
       return aiApi.reconcileInConversation(selectedConversationId, {
         business_file_id: businessFile.file_id,
         channel_file_id: channelFile.file_id,
         batch_type: 'ORDER_VS_JY',
         channel_primary_key: channelPrimaryKey,
+        channel_amount_unit: channelAmountUnit,
         template_id: selectedTemplateId,
       });
     },
@@ -796,11 +884,16 @@ const AIQuery: React.FC = () => {
       messageApi.warning('璇烽€夋嫨娓犻亾鏂囦欢涓婚敭瀛楁');
       return;
     }
+    if (selectedFileType === 'JY' && !pendingChannelAmountUnit) {
+      messageApi.warning('请选择渠道交易金额单位（元/分）');
+      return;
+    }
 
     uploadMutation.mutate({
       files,
       fileType: selectedFileType,
       channelPrimaryKey: selectedFileType === 'JY' ? pendingChannelPrimaryKey : undefined,
+      channelAmountUnit: selectedFileType === 'JY' ? pendingChannelAmountUnit : undefined,
     });
   };
 
@@ -1113,6 +1206,15 @@ const AIQuery: React.FC = () => {
                               {FILE_TYPE_LABELS[file.type] || file.type}
                             </Tag>
                             {file.source_label ? <Tag color="cyan">{file.source_label}</Tag> : null}
+                            {file.type === 'JY' &&
+                            (file.channel_amount_unit || channelAmountUnitByFileId[file.file_id]) ? (
+                              <Tag color="geekblue">
+                                金额单位：
+                                {(file.channel_amount_unit || channelAmountUnitByFileId[file.file_id]) === 'fen'
+                                  ? '分'
+                                  : '元'}
+                              </Tag>
+                            ) : null}
                             <Tag>{file.records} 条</Tag>
                             {isBusinessSelected ? <Tag color="green">当前业务方</Tag> : null}
                             {isChannelSelected ? <Tag color="blue">当前渠道方</Tag> : null}
@@ -1149,13 +1251,22 @@ const AIQuery: React.FC = () => {
           />
 
           {selectedFileType === 'JY' ? (
-            <Select
-              value={pendingChannelPrimaryKey}
-              onChange={setPendingChannelPrimaryKey}
-              options={CHANNEL_PRIMARY_KEY_OPTIONS}
-              style={{ width: '100%' }}
-              placeholder="channel primary key"
-            />
+            <Space direction="vertical" size={8} style={{ width: '100%' }}>
+              <Select
+                value={pendingChannelPrimaryKey}
+                onChange={setPendingChannelPrimaryKey}
+                options={CHANNEL_PRIMARY_KEY_OPTIONS}
+                style={{ width: '100%' }}
+                placeholder="channel primary key"
+              />
+              <Select
+                value={pendingChannelAmountUnit}
+                onChange={setPendingChannelAmountUnit}
+                options={CHANNEL_AMOUNT_UNIT_OPTIONS}
+                style={{ width: '100%' }}
+                placeholder="请选择渠道账单金额单位"
+              />
+            </Space>
           ) : null}
 
           <Upload

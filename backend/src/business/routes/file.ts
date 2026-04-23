@@ -179,6 +179,7 @@ export function createFileRoutes(processor: FileProcessor): FastifyPluginAsync {
       let filename = 'uploaded.txt';
       let buffer: Buffer | undefined;
       let forcedFileType: string | undefined;
+      let amountUnit: 'fen' | 'yuan' | undefined;
       let merchantId: string | undefined;
 
       if (request.isMultipart()) {
@@ -197,6 +198,11 @@ export function createFileRoutes(processor: FileProcessor): FastifyPluginAsync {
           } else if (part.type === 'field') {
             if (part.fieldname === 'file_type' || part.fieldname === 'fileType') {
               forcedFileType = String(part.value);
+            } else if (part.fieldname === 'amount_unit' || part.fieldname === 'amountUnit') {
+              const normalized = String(part.value).trim().toLowerCase();
+              if (normalized === 'fen' || normalized === 'yuan') {
+                amountUnit = normalized;
+              }
             } else if (part.fieldname === 'merchantId' || part.fieldname === 'merchant_id') {
               merchantId = String(part.value);
             }
@@ -215,6 +221,17 @@ export function createFileRoutes(processor: FileProcessor): FastifyPluginAsync {
         } else if (typeof body.fileType === 'string') {
           forcedFileType = body.fileType;
         }
+        if (typeof body.amount_unit === 'string') {
+          const normalized = body.amount_unit.trim().toLowerCase();
+          if (normalized === 'fen' || normalized === 'yuan') {
+            amountUnit = normalized;
+          }
+        } else if (typeof body.amountUnit === 'string') {
+          const normalized = body.amountUnit.trim().toLowerCase();
+          if (normalized === 'fen' || normalized === 'yuan') {
+            amountUnit = normalized;
+          }
+        }
         if (!merchantId) {
           merchantId = extractMerchantId(request);
         }
@@ -229,13 +246,26 @@ export function createFileRoutes(processor: FileProcessor): FastifyPluginAsync {
         return reply.status(400).send(err(1, 'No content provided'));
       }
 
-      const result = await processor.processBuffer(content, filename, 'upload', forcedFileType, buffer, merchantId);
+      const result = await processor.processBuffer(
+        content,
+        filename,
+        'upload',
+        forcedFileType,
+        buffer,
+        merchantId,
+        { amountUnit },
+      );
 
       if (!result.success) {
         return reply.status(400).send(err(2, result.error || 'Process failed'));
       }
 
-      return ok({ file_id: result.fileId, records: result.records, type: result.type });
+      return ok({
+        file_id: result.fileId,
+        records: result.records,
+        type: result.type,
+        channel_amount_unit: result.channel_amount_unit,
+      });
     });
     fastify.post('/files/import-with-template', async (request, reply) => {
       const body = request.body as Record<string, unknown>;

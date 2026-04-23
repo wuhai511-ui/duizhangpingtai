@@ -140,6 +140,7 @@ export const aiApi = {
         source_kind?: string;
         detection_confidence?: number;
         channel_primary_key?: string;
+        channel_amount_unit?: 'fen' | 'yuan';
       }>;
     },
   ): Promise<AIConversationMessage> => {

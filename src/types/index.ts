@@ -117,6 +117,7 @@ export interface FileUploadResult {
   source_label?: string;
   source_kind?: string;
   detection_confidence?: number;
+  channel_amount_unit?: 'fen' | 'yuan';
 }
 
 export interface FileInfo {
@@ -167,6 +168,7 @@ export interface ReconcileRequest {
   batch_type?: 'ORDER_VS_JY' | 'JY_VS_JS';
   check_date?: string;
   channel_primary_key?: string;
+  channel_amount_unit?: 'fen' | 'yuan';
   template_id?: string;
 }
 

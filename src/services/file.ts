@@ -20,11 +20,18 @@ function normalizeFileInfo(file: Record<string, unknown>): FileInfo {
 }
 
 export const fileApi = {
-  upload: async (file: File, fileType?: UploadFileType): Promise<FileUploadResult> => {
+  upload: async (
+    file: File,
+    fileType?: UploadFileType,
+    options?: { amountUnit?: 'fen' | 'yuan' },
+  ): Promise<FileUploadResult> => {
     const formData = new FormData();
     formData.append('file', file);
     if (fileType) {
       formData.append('file_type', fileType);
+    }
+    if (options?.amountUnit) {
+      formData.append('amount_unit', options.amountUnit);
     }
 
     const response = await api.post<ApiResponse<FileUploadResult>>('/files/upload', formData);
