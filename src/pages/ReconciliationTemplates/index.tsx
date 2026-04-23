@@ -33,6 +33,28 @@ const MATCH_MODE_OPTIONS = [
   { label: '包含', value: 'contains' },
 ];
 
+const ORDER_VS_JY_BUSINESS_FIELDS = [
+  'orig_serial_no',
+  'order_no',
+  'pay_serial_no',
+  'order_amount',
+  'trans_date',
+];
+
+const ORDER_VS_JY_CHANNEL_FIELDS = [
+  'merchant_order_no',
+  'lakala_serial',
+  'amount',
+  'settle_amount',
+  'trans_date',
+];
+
+const AMOUNT_TRANSFORM_OPTIONS = [
+  { label: '自动', value: 'auto' },
+  { label: '分(原值)', value: 'fen_identity' },
+  { label: '元转分', value: 'yuan_to_fen' },
+];
+
 function buildDefaultTemplate(): ReconTemplateConfig {
   return {
     id: '',
@@ -44,7 +66,7 @@ function buildDefaultTemplate(): ReconTemplateConfig {
     primary_keys: [
       {
         mode: 'exact',
-        business_field: 'order_no',
+        business_field: 'orig_serial_no',
         channel_field: 'merchant_order_no',
         weight: 100,
       },
@@ -62,6 +84,8 @@ function buildDefaultTemplate(): ReconTemplateConfig {
       channel_field: 'amount',
       tolerance: 0,
       strict: true,
+      business_transform: 'fen_identity',
+      channel_transform: 'fen_identity',
     },
     date_check: {
       business_field: 'trans_date',
@@ -273,10 +297,20 @@ const ReconciliationTemplatesPage: React.FC = () => {
                 {fields.map((field) => (
                   <Space key={field.key} align="start" style={{ display: 'flex', marginBottom: 8 }}>
                     <Form.Item name={[field.name, 'business_field']} rules={[{ required: true }]}>
-                      <Input placeholder="业务字段，如 order_no" />
+                      <Select
+                        showSearch
+                        options={ORDER_VS_JY_BUSINESS_FIELDS.map((item) => ({ label: item, value: item }))}
+                        style={{ width: 180 }}
+                        placeholder="业务字段"
+                      />
                     </Form.Item>
                     <Form.Item name={[field.name, 'channel_field']} rules={[{ required: true }]}>
-                      <Input placeholder="渠道字段，如 merchant_order_no" />
+                      <Select
+                        showSearch
+                        options={ORDER_VS_JY_CHANNEL_FIELDS.map((item) => ({ label: item, value: item }))}
+                        style={{ width: 180 }}
+                        placeholder="渠道字段"
+                      />
                     </Form.Item>
                     <Form.Item name={[field.name, 'mode']} initialValue="exact">
                       <Select options={MATCH_MODE_OPTIONS} style={{ width: 110 }} />
@@ -298,10 +332,20 @@ const ReconciliationTemplatesPage: React.FC = () => {
                 {fields.map((field) => (
                   <Space key={field.key} align="start" style={{ display: 'flex', marginBottom: 8 }}>
                     <Form.Item name={[field.name, 'business_field']}>
-                      <Input placeholder="业务辅助字段" />
+                      <Select
+                        showSearch
+                        options={ORDER_VS_JY_BUSINESS_FIELDS.map((item) => ({ label: item, value: item }))}
+                        style={{ width: 180 }}
+                        placeholder="业务辅助字段"
+                      />
                     </Form.Item>
                     <Form.Item name={[field.name, 'channel_field']}>
-                      <Input placeholder="渠道辅助字段" />
+                      <Select
+                        showSearch
+                        options={ORDER_VS_JY_CHANNEL_FIELDS.map((item) => ({ label: item, value: item }))}
+                        style={{ width: 180 }}
+                        placeholder="渠道辅助字段"
+                      />
                     </Form.Item>
                     <Form.Item name={[field.name, 'required']} valuePropName="checked" initialValue={false}>
                       <Switch checkedChildren="必需" unCheckedChildren="可选" />
@@ -320,19 +364,41 @@ const ReconciliationTemplatesPage: React.FC = () => {
           <Card size="small" title="金额与日期字段" style={{ marginTop: 12 }}>
             <Space wrap>
               <Form.Item name={['amount_check', 'business_field']} label="业务金额字段" rules={[{ required: true }]}>
-                <Input placeholder="order_amount" />
+                <Select
+                  options={ORDER_VS_JY_BUSINESS_FIELDS.map((item) => ({ label: item, value: item }))}
+                  placeholder="order_amount"
+                  style={{ width: 180 }}
+                />
               </Form.Item>
               <Form.Item name={['amount_check', 'channel_field']} label="渠道金额字段" rules={[{ required: true }]}>
-                <Input placeholder="amount" />
+                <Select
+                  options={ORDER_VS_JY_CHANNEL_FIELDS.map((item) => ({ label: item, value: item }))}
+                  placeholder="amount"
+                  style={{ width: 180 }}
+                />
+              </Form.Item>
+              <Form.Item name={['amount_check', 'business_transform']} label="业务金额转换" initialValue="fen_identity">
+                <Select options={AMOUNT_TRANSFORM_OPTIONS} style={{ width: 130 }} />
+              </Form.Item>
+              <Form.Item name={['amount_check', 'channel_transform']} label="渠道金额转换" initialValue="fen_identity">
+                <Select options={AMOUNT_TRANSFORM_OPTIONS} style={{ width: 130 }} />
               </Form.Item>
               <Form.Item name={['amount_check', 'tolerance']} label="金额容差(分)">
                 <InputNumber min={0} />
               </Form.Item>
               <Form.Item name={['date_check', 'business_field']} label="业务日期字段" rules={[{ required: true }]}>
-                <Input placeholder="trans_date" />
+                <Select
+                  options={ORDER_VS_JY_BUSINESS_FIELDS.map((item) => ({ label: item, value: item }))}
+                  placeholder="trans_date"
+                  style={{ width: 160 }}
+                />
               </Form.Item>
               <Form.Item name={['date_check', 'channel_field']} label="渠道日期字段" rules={[{ required: true }]}>
-                <Input placeholder="trans_date" />
+                <Select
+                  options={ORDER_VS_JY_CHANNEL_FIELDS.map((item) => ({ label: item, value: item }))}
+                  placeholder="trans_date"
+                  style={{ width: 160 }}
+                />
               </Form.Item>
               <Form.Item name={['date_check', 'rolling_days']} label="滚动天数">
                 <InputNumber min={0} />

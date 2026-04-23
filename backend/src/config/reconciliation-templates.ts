@@ -35,6 +35,8 @@ export interface ReconTemplate {
     channel_field: string;      // 渠道方金额字段
     tolerance?: number;         // 允许误差（分）
     strict?: boolean;           // 是否严格相等
+    business_transform?: 'auto' | 'fen_identity' | 'yuan_to_fen';
+    channel_transform?: 'auto' | 'fen_identity' | 'yuan_to_fen';
   };
   
   // 日期校验配置
@@ -122,16 +124,16 @@ export const DEFAULT_RECON_TEMPLATES: Record<string, ReconTemplate> = {
     primary_keys: [
       {
         mode: 'exact',
-        business_field: 'pay_serial_no',
-        channel_field: 'lakala_serial',
+        business_field: 'orig_serial_no',
+        channel_field: 'merchant_order_no',
         weight: 100,
       },
     ],
     
     auxiliary_fields: [
       {
-        business_field: 'order_no',
-        channel_field: 'merchant_order_no',
+        business_field: 'pay_serial_no',
+        channel_field: 'lakala_serial',
         required: false,
         mode: 'exact',
       },
@@ -142,6 +144,8 @@ export const DEFAULT_RECON_TEMPLATES: Record<string, ReconTemplate> = {
       channel_field: 'amount',
       tolerance: 0,
       strict: true,
+      business_transform: 'fen_identity',
+      channel_transform: 'fen_identity',
     },
     
     date_check: {
@@ -213,7 +217,7 @@ export const DEFAULT_RECON_TEMPLATES: Record<string, ReconTemplate> = {
     primary_keys: [
       {
         mode: 'exact',
-        business_field: 'order_no',
+        business_field: 'orig_serial_no',
         channel_field: 'merchant_order_no',
         weight: 100,
       },
@@ -233,6 +237,8 @@ export const DEFAULT_RECON_TEMPLATES: Record<string, ReconTemplate> = {
       channel_field: 'amount',
       tolerance: 100, // 允许1元误差
       strict: false,
+      business_transform: 'fen_identity',
+      channel_transform: 'fen_identity',
     },
     
     date_check: {

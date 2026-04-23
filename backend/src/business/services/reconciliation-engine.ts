@@ -46,6 +46,38 @@ export interface ReconOptions {
 }
 
 export class ReconciliationEngine {
+  private normalizeAmount(
+    value: unknown,
+    transform: 'auto' | 'fen_identity' | 'yuan_to_fen' = 'auto',
+  ): bigint {
+    const rawText = String(value ?? '').trim().replace(/[`',，\s]/g, '');
+    if (!rawText) return 0n;
+
+    const toFen = (text: string): bigint => {
+      const negative = text.startsWith('-');
+      const unsigned = negative ? text.slice(1) : text;
+      const [intPartRaw, fracRaw = ''] = unsigned.split('.');
+      const intPart = intPartRaw.replace(/\D/g, '') || '0';
+      const fracPart = fracRaw.replace(/\D/g, '').slice(0, 2).padEnd(2, '0');
+      const fen = BigInt(intPart) * 100n + BigInt(fracPart || '0');
+      return negative ? -fen : fen;
+    };
+
+    if (transform === 'yuan_to_fen') {
+      return toFen(rawText);
+    }
+    if (transform === 'fen_identity') {
+      const intText = rawText.includes('.') ? rawText.split('.')[0] : rawText;
+      const normalized = intText === '' || intText === '-' ? '0' : intText;
+      return BigInt(normalized);
+    }
+
+    if (rawText.includes('.')) {
+      return toFen(rawText);
+    }
+    return BigInt(rawText);
+  }
+
   /**
    * 执行双方数据对账（旧接口兼容）
    */
@@ -304,8 +336,14 @@ export class ReconciliationEngine {
           }
 
           // 校验金额
-          const businessAmount = BigInt(String(this.getFieldValue(businessItem, template.amount_check.business_field) || 0));
-          const channelAmount = BigInt(String(this.getFieldValue(channelItem, template.amount_check.channel_field) || 0));
+          const businessAmount = this.normalizeAmount(
+            this.getFieldValue(businessItem, template.amount_check.business_field),
+            template.amount_check.business_transform ?? 'auto',
+          );
+          const channelAmount = this.normalizeAmount(
+            this.getFieldValue(channelItem, template.amount_check.channel_field),
+            template.amount_check.channel_transform ?? 'auto',
+          );
           const tolerance = BigInt(template.amount_check.tolerance || 0);
 
           // 校验日期
@@ -393,7 +431,10 @@ export class ReconciliationEngine {
       const businessItem = businessData[bi];
       stats.total++;
       stats.long++;
-      const businessAmount = BigInt(String(this.getFieldValue(businessItem, template.amount_check.business_field) || 0));
+      const businessAmount = this.normalizeAmount(
+        this.getFieldValue(businessItem, template.amount_check.business_field),
+        template.amount_check.business_transform ?? 'auto',
+      );
       details.push({
         serial_no: String(this.getFieldValue(businessItem, template.primary_keys[0]?.business_field) || `BO_${bi}`),
         result_type: ResultType.LONG,
@@ -408,7 +449,10 @@ export class ReconciliationEngine {
       const channelItem = channelData[ci];
       stats.total++;
       stats.short++;
-      const channelAmount = BigInt(String(this.getFieldValue(channelItem, template.amount_check.channel_field) || 0));
+      const channelAmount = this.normalizeAmount(
+        this.getFieldValue(channelItem, template.amount_check.channel_field),
+        template.amount_check.channel_transform ?? 'auto',
+      );
       details.push({
         serial_no: String(this.getFieldValue(channelItem, template.primary_keys[0]?.channel_field) || `CH_${ci}`),
         result_type: ResultType.SHORT,

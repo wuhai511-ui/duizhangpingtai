@@ -50,6 +50,7 @@ export class BusinessOrderParser {
     '订单状态': 'order_status',
     '支付流水号': 'pay_serial_no',
     '交易流水号': 'pay_serial_no',
+    '父单号': 'orig_serial_no',
     '原交易流水号': 'orig_serial_no',
     '中介单号': 'orig_serial_no',
     '交易日期': 'trans_date',

@@ -123,12 +123,16 @@ export class JyParser {
 
   private mapToRecord(headers: string[], values: string[]): JyTransaction | null {
     const raw: Record<string, unknown> = {};
+    const unitHints: Record<string, 'fen' | 'yuan' | undefined> = {};
 
     headers.forEach((header, index) => {
       const normalizedHeader = this.cleanText(header);
       const fieldName = this.fieldMap[normalizedHeader];
       if (fieldName && values[index] !== undefined) {
         raw[fieldName] = this.cleanText(values[index]);
+        if (!unitHints[fieldName]) {
+          unitHints[fieldName] = this.detectAmountUnitHint(normalizedHeader);
+        }
       }
     });
 
@@ -144,9 +148,9 @@ export class JyParser {
       this.extractTime(transTimeRaw) ||
       transTimeRaw;
 
-    const amount = this.parseAmount(raw.amount);
-    const fee = this.parseAmount(raw.fee);
-    const settleAmount = this.parseAmount(raw.settle_amount);
+    const amount = this.parseAmount(raw.amount, unitHints.amount);
+    const fee = this.parseAmount(raw.fee, unitHints.fee);
+    const settleAmount = this.parseAmount(raw.settle_amount, unitHints.settle_amount);
 
     return {
       merchant_no: String(raw.merchant_no || ''),
@@ -195,7 +199,19 @@ export class JyParser {
     return cleaned.split(' ')[1] || '';
   }
 
-  private parseAmount(value: unknown): number {
+  private detectAmountUnitHint(header: string): 'fen' | 'yuan' | undefined {
+    const normalized = this.cleanText(header).toLowerCase();
+    if (!normalized) return undefined;
+    if (normalized.includes('(分') || normalized.includes('（分') || normalized.endsWith('分')) {
+      return 'fen';
+    }
+    if (normalized.includes('(元') || normalized.includes('（元') || normalized.includes('元')) {
+      return 'yuan';
+    }
+    return undefined;
+  }
+
+  private parseAmount(value: unknown, unitHint?: 'fen' | 'yuan'): number {
     if (!value && value !== 0) {
       return 0;
     }
@@ -204,6 +220,13 @@ export class JyParser {
     const num = parseFloat(str);
     if (Number.isNaN(num)) {
       return 0;
+    }
+
+    if (unitHint === 'fen') {
+      return Math.round(num);
+    }
+    if (unitHint === 'yuan') {
+      return Math.round(num * 100);
     }
 
     if (str.includes('.') || Math.abs(num) < 10000) {

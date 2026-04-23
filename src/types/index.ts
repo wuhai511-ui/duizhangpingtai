@@ -255,6 +255,8 @@ export interface ReconTemplateConfig {
     channel_field: string;
     tolerance?: number;
     strict?: boolean;
+    business_transform?: 'auto' | 'fen_identity' | 'yuan_to_fen';
+    channel_transform?: 'auto' | 'fen_identity' | 'yuan_to_fen';
   };
   date_check: {
     business_field: string;
