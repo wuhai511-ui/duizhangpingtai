@@ -61,6 +61,7 @@ export class FileProcessor {
   private settlementRepo: SettlementRepository | null = null;
   private files = new Map<string, FileMeta>();
   private fileRecords = new Map<string, unknown[]>();
+  private defaultMerchantId: string | null = null;
 
   constructor(private pool: Pool) {
     void this.pool;
@@ -141,7 +142,11 @@ export class FileProcessor {
 
     try {
       if (this.prisma) {
-        savedCount = await this.saveRecords(fileType, parseResult.records, fileId, merchantId);
+        const effectiveMerchantId = await this.resolveMerchantId(merchantId);
+        if (!effectiveMerchantId) {
+          return { success: false, records: 0, error: 'merchantId is required' };
+        }
+        savedCount = await this.saveRecords(fileType, parseResult.records, fileId, effectiveMerchantId);
         // 持久化文件记录（含来源标签）
         await this.saveFileRecord({
           fileId,
@@ -151,7 +156,7 @@ export class FileProcessor {
           sourceLabel: sourceDetection.source_label,
           sourceKind: sourceDetection.source_kind,
           recordCount: savedCount,
-          merchantId,
+          merchantId: effectiveMerchantId,
           headersJson: headers.length > 0 ? JSON.stringify(headers) : null,
         });
       }
@@ -209,7 +214,11 @@ export class FileProcessor {
 
     try {
       if (this.prisma) {
-        savedCount = await this.saveRecords('BUSINESS_ORDER', records, fileId, merchantId);
+        const effectiveMerchantId = await this.resolveMerchantId(merchantId);
+        if (!effectiveMerchantId) {
+          return { success: false, records: 0, error: 'merchantId is required' };
+        }
+        savedCount = await this.saveRecords('BUSINESS_ORDER', records, fileId, effectiveMerchantId);
         await this.saveFileRecord({
           fileId,
           filename,
@@ -218,7 +227,7 @@ export class FileProcessor {
           sourceLabel: sourceDetection.source_label,
           sourceKind: sourceDetection.source_kind,
           recordCount: savedCount,
-          merchantId,
+          merchantId: effectiveMerchantId,
           headersJson: headers.length > 0 ? JSON.stringify(headers) : null,
         });
       }
@@ -288,8 +297,11 @@ export class FileProcessor {
   }
 
   private async saveRecords(fileType: string, records: any[], fileId?: string, merchantId?: string): Promise<number> {
-    if (!this.prisma || !merchantId) {
+    if (!this.prisma) {
       return records.length;
+    }
+    if (!merchantId) {
+      throw new Error('merchantId is required');
     }
 
     // merchantId 必须由调用方从登录态获取，不再内部创建
@@ -297,7 +309,7 @@ export class FileProcessor {
 
     switch (fileType) {
       case 'JY':
-        return this.saveJyTransactions(effectiveMerchantId, records);
+        return this.saveJyTransactions(effectiveMerchantId, records, fileId);
       case 'JS':
         return this.saveJsSettlements(effectiveMerchantId, records);
       case 'JZ':
@@ -319,9 +331,9 @@ export class FileProcessor {
     }
   }
 
-  private async saveJyTransactions(merchantId: string, records: any[]): Promise<number> {
+  private async saveJyTransactions(merchantId: string, records: any[], fileId?: string): Promise<number> {
     for (const record of records) {
-      await this.transactionRepo!.saveJyTransaction(merchantId, record);
+      await this.transactionRepo!.saveJyTransaction(merchantId, record, fileId);
     }
     return records.length;
   }
@@ -490,6 +502,30 @@ export class FileProcessor {
       return { items, total };
     }
     return this.listFiles(opts);
+  }
+
+  private async resolveMerchantId(merchantId?: string): Promise<string | undefined> {
+    if (merchantId) {
+      return merchantId;
+    }
+    if (!this.prisma) {
+      return undefined;
+    }
+    if (this.defaultMerchantId) {
+      return this.defaultMerchantId;
+    }
+
+    const merchant = await this.prisma.merchant.upsert({
+      where: { merchant_no: 'DEFAULT' },
+      update: {},
+      create: {
+        merchant_no: 'DEFAULT',
+        name: 'Default Merchant',
+        status: 1,
+      },
+    });
+    this.defaultMerchantId = merchant.id;
+    return merchant.id;
   }
 
   private async saveFileRecord(params: {

@@ -3,18 +3,21 @@ import { PrismaClient } from '@prisma/client';
 export class TransactionRepository {
   constructor(private prisma: PrismaClient) {}
 
-  async saveJyTransaction(merchantId: string, data: any) {
+  async saveJyTransaction(merchantId: string, data: any, fileId?: string) {
     const merchant_order_no = data.merchant_order_no || data.lakala_serial || `jy_${data.trans_date}_${Date.now()}`;
     return this.prisma.jyTransaction.upsert({
       where: {
         merchantId_merchant_order_no: { merchantId, merchant_order_no },
       },
       update: {
+        trans_date: data.trans_date,
+        trans_time: data.trans_time,
         amount: BigInt(data.amount || 0),
         fee: BigInt(data.fee || 0),
         settle_amount: BigInt(data.settle_amount || 0),
         trans_type: data.trans_type,
         lakala_serial: data.lakala_serial,
+        file_id: fileId || null,
       },
       create: {
         merchantId,
@@ -37,6 +40,7 @@ export class TransactionRepository {
         sys_ref_no: data.sys_ref_no,
         remark: data.remark,
         pay_method: data.pay_method,
+        file_id: fileId || null,
       },
     });
   }

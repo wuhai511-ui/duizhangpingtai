@@ -23,6 +23,24 @@ function err(code: number, message: string): ApiResponse<null> {
   return { code, message, data: null };
 }
 
+function extractMerchantId(request: any, body?: Record<string, unknown>): string | undefined {
+  const headerMerchantId = request?.headers?.['x-merchant-id'];
+  if (typeof headerMerchantId === 'string' && headerMerchantId.trim()) {
+    return headerMerchantId.trim();
+  }
+  const userMerchantId = request?.user?.merchantId || request?.user?.merchant_id;
+  if (typeof userMerchantId === 'string' && userMerchantId.trim()) {
+    return userMerchantId.trim();
+  }
+  if (body) {
+    const bodyMerchantId = body.merchantId || body.merchant_id;
+    if (typeof bodyMerchantId === 'string' && bodyMerchantId.trim()) {
+      return bodyMerchantId.trim();
+    }
+  }
+  return undefined;
+}
+
 export const aiRoutes: FastifyPluginAsync = async (fastify) => {
   /** AI 自然语言查询 */
   fastify.post('/ai/query', async (request, reply) => {
@@ -236,7 +254,7 @@ const BUSINESS_KEYWORDS = ['merchant', '商户', 'order', '订单', '内部', '�
  * 2. 文件类型：JY/JS/SEP等
  * 3. 记录数
  */
-export const createAiFileRoutes = (processor: { processBuffer: (content: string, filename: string, source: 'sftp' | 'upload' | 'api', forcedFileType?: string, buffer?: Buffer) => Promise<{ success: boolean; records: number; type?: string; error?: string; fileId?: string }> }): FastifyPluginAsync => {
+export const createAiFileRoutes = (processor: { processBuffer: (content: string, filename: string, source: 'sftp' | 'upload' | 'api', forcedFileType?: string, buffer?: Buffer, merchantId?: string) => Promise<{ success: boolean; records: number; type?: string; error?: string; fileId?: string }> }): FastifyPluginAsync => {
   return async (fastify) => {
     /** AI识别文件类型 */
     fastify.post('/ai/recognize', async (request, reply) => {
@@ -337,6 +355,8 @@ export const createAiFileRoutes = (processor: { processBuffer: (content: string,
 
     /** AI上传对账文件 */
     fastify.post('/ai/upload', async (request, reply) => {
+      const body = (request.body as Record<string, unknown> | undefined) || {};
+      const merchantId = extractMerchantId(request, body);
       let content = '';
       let filename = 'unknown.dat';
       let fileBuffer: Buffer | undefined;
@@ -364,7 +384,7 @@ export const createAiFileRoutes = (processor: { processBuffer: (content: string,
       }
 
       // 处理文件，传递用户指定的文件类型和 buffer（支持 Excel）
-      const result = await processor.processBuffer(content, filename, 'upload', fileType, fileBuffer);
+      const result = await processor.processBuffer(content, filename, 'upload', fileType, fileBuffer, merchantId);
 
       if (!result.success) {
         return reply.status(400).send(err(2, result.error || 'File processing failed'));
@@ -381,6 +401,8 @@ export const createAiFileRoutes = (processor: { processBuffer: (content: string,
 
     /** 批量上传文件 */
     fastify.post('/ai/upload/batch', async (request, reply) => {
+      const body = (request.body as Record<string, unknown> | undefined) || {};
+      const merchantId = extractMerchantId(request, body);
       const files: Array<{ content: string; filename: string; buffer: Buffer }> = [];
       let dataType: 'business' | 'channel' = 'channel';
       let fileType: 'JY' | 'JS' | 'SEP' | 'INVOICE' | 'BUSINESS_ORDER' = 'JY';
@@ -440,7 +462,7 @@ export const createAiFileRoutes = (processor: { processBuffer: (content: string,
           continue;
         }
 
-        const result = await processor.processBuffer(content, filename, 'upload', fileType, fileObj.buffer);
+        const result = await processor.processBuffer(content, filename, 'upload', fileType, fileObj.buffer, merchantId);
 
         if (result.success) {
           results.push({
