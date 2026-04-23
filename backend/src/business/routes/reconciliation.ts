@@ -9,8 +9,14 @@
  */
 import type { FastifyPluginAsync } from 'fastify';
 import type { PrismaClient } from '@prisma/client';
-import { ReconciliationEngine, ResultType } from '../../services/reconciliation-engine.js';
+import { ReconciliationEngine } from '../services/reconciliation-engine.js';
 import { ReconPostProcessor } from '../services/recon-post-processor.js';
+import {
+  getDefaultTemplateByBatchType,
+  getReconTemplate,
+  type BatchType,
+  type ReconTemplate,
+} from '../../config/reconciliation-templates.js';
 
 interface ApiResponse<T = unknown> {
   code: number;
@@ -30,6 +36,50 @@ function err(code: number, message: string) {
 let prisma: PrismaClient;
 const engine = new ReconciliationEngine();
 let postProcessor: ReconPostProcessor;
+const RECON_TEMPLATE_TYPE = 'RECON_TEMPLATE';
+
+async function getCustomTemplateById(templateId: string): Promise<ReconTemplate | null> {
+  const row = await prisma.billTemplate.findUnique({ where: { id: templateId } });
+  if (!row || row.type !== RECON_TEMPLATE_TYPE) return null;
+  try {
+    const parsed = JSON.parse(row.field_config || '{}');
+    return { ...parsed, id: row.id } as ReconTemplate;
+  } catch {
+    return null;
+  }
+}
+
+async function getDefaultCustomTemplate(batchType: BatchType): Promise<ReconTemplate | null> {
+  const rows = await prisma.billTemplate.findMany({
+    where: { type: RECON_TEMPLATE_TYPE, is_default: true },
+    orderBy: { updated_at: 'desc' },
+  });
+  for (const row of rows) {
+    try {
+      const parsed = JSON.parse(row.field_config || '{}');
+      if (parsed?.batch_type === batchType) {
+        return { ...parsed, id: row.id } as ReconTemplate;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+async function resolveReconTemplate(
+  batchType: BatchType,
+  templateId?: string,
+): Promise<ReconTemplate | null> {
+  if (templateId) {
+    const custom = await getCustomTemplateById(templateId);
+    if (custom) return custom;
+    return getReconTemplate(templateId);
+  }
+  const customDefault = await getDefaultCustomTemplate(batchType);
+  if (customDefault) return customDefault;
+  return getDefaultTemplateByBatchType(batchType);
+}
 
 function buildBatchWhere(fileId?: string | null, checkDate?: string | null) {
   if (fileId) {
@@ -159,6 +209,7 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
   /** 执行对账 */
   fastify.post('/reconciliation/batches/:id/execute', async (request, reply) => {
     const { id } = request.params as { id: string };
+    const body = (request.body as { template_id?: string } | undefined) || {};
 
     const batch = await prisma.reconciliationBatch.findUnique({
       where: { id },
@@ -181,7 +232,13 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
     try {
       const { businessData, channelData } = await loadBatchData(batch);
 
-      const result = engine.reconcile(businessData, channelData, batch.batch_type as any);
+      const template = await resolveReconTemplate(batch.batch_type as BatchType, body.template_id);
+      const result = engine.reconcile(
+        businessData,
+        channelData,
+        batch.batch_type as any,
+        template ? { template } : {},
+      );
 
       // 保存对账明细
       for (const detail of result.details) {
@@ -301,12 +358,13 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
 
     try {
       const { businessData, channelData } = await loadBatchData(batch);
-      const options: any = {};
-      if (body.template_id) {
-        options.templateId = body.template_id;
-      }
-
-      const result = engine.reconcile(businessData, channelData, batch.batch_type as any, options);
+      const template = await resolveReconTemplate(batch.batch_type as BatchType, body.template_id);
+      const result = engine.reconcile(
+        businessData,
+        channelData,
+        batch.batch_type as any,
+        template ? { template } : {},
+      );
 
       // 清除旧明细
       await prisma.reconProcessLog.deleteMany({ where: { batch_id: id } });

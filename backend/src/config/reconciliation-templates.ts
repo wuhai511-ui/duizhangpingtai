@@ -264,3 +264,17 @@ export function getAllReconTemplates(): ReconTemplate[] {
 export function getTemplatesByBatchType(batchType: BatchType): ReconTemplate[] {
   return Object.values(DEFAULT_RECON_TEMPLATES).filter(t => t.batch_type === batchType);
 }
+
+/**
+ * 获取批次类型默认模板
+ * ORDER_VS_JY 默认按订单号匹配（业务 order_no -> 渠道 merchant_order_no）
+ */
+export function getDefaultTemplateByBatchType(batchType: BatchType): ReconTemplate | null {
+  if (batchType === 'ORDER_VS_JY') {
+    return DEFAULT_RECON_TEMPLATES.order_by_merchant_order || null;
+  }
+  if (batchType === 'JY_VS_JS') {
+    return DEFAULT_RECON_TEMPLATES.jy_vs_js || null;
+  }
+  return null;
+}

@@ -8,6 +8,12 @@ import type { FastifyPluginAsync } from 'fastify';
 import { sanitize, isInjection } from '../../utils/prompt-sanitizer.js';
 import { ask, mockAsk } from '../../services/llm.js';
 import { guessFileType } from '../../services/file-processor.js';
+import {
+  getDefaultTemplateByBatchType,
+  getReconTemplate,
+  type BatchType,
+  type ReconTemplate,
+} from '../../config/reconciliation-templates.js';
 
 interface ApiResponse<T = unknown> {
   code: number;
@@ -39,6 +45,54 @@ function extractMerchantId(request: any, body?: Record<string, unknown>): string
     }
   }
   return undefined;
+}
+
+const RECON_TEMPLATE_TYPE = 'RECON_TEMPLATE';
+
+async function getCustomReconTemplate(prisma: any, templateId: string): Promise<ReconTemplate | null> {
+  if (!prisma?.billTemplate?.findUnique) return null;
+  const row = await prisma.billTemplate.findUnique({ where: { id: templateId } });
+  if (!row || row.type !== RECON_TEMPLATE_TYPE) return null;
+  try {
+    const parsed = JSON.parse(row.field_config || '{}');
+    return { ...parsed, id: row.id } as ReconTemplate;
+  } catch {
+    return null;
+  }
+}
+
+async function getDefaultCustomReconTemplate(prisma: any, batchType: BatchType): Promise<ReconTemplate | null> {
+  if (!prisma?.billTemplate?.findMany) return null;
+  const rows = await prisma.billTemplate.findMany({
+    where: { type: RECON_TEMPLATE_TYPE, is_default: true },
+    orderBy: { updated_at: 'desc' },
+  });
+  for (const row of rows || []) {
+    try {
+      const parsed = JSON.parse(row.field_config || '{}');
+      if (parsed?.batch_type === batchType) {
+        return { ...parsed, id: row.id } as ReconTemplate;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+async function resolveReconTemplate(
+  prisma: any,
+  batchType: BatchType,
+  templateId?: string,
+): Promise<ReconTemplate | null> {
+  if (templateId) {
+    const custom = await getCustomReconTemplate(prisma, templateId);
+    if (custom) return custom;
+    return getReconTemplate(templateId);
+  }
+  const customDefault = await getDefaultCustomReconTemplate(prisma, batchType);
+  if (customDefault) return customDefault;
+  return getDefaultTemplateByBatchType(batchType);
 }
 
 export const aiRoutes: FastifyPluginAsync = async (fastify) => {
@@ -512,7 +566,14 @@ function detectReconciliationIntent(text: string): boolean {
  * POST /ai/reconcile — AI 触发对账
  */
 export const createAiReconcileRoutes = (
-  prisma: { reconciliationBatch: { create: Function; findMany: Function; update: Function }; reconciliationDetail: { create: Function }; businessOrder: { findMany: Function }; jyTransaction: { findMany: Function }; jsSettlement: { findMany: Function } },
+  prisma: {
+    reconciliationBatch: { create: Function; findMany: Function; update: Function };
+    reconciliationDetail: { create: Function };
+    businessOrder: { findMany: Function };
+    jyTransaction: { findMany: Function };
+    jsSettlement: { findMany: Function };
+    billTemplate?: { findUnique: Function; findMany: Function };
+  },
   engine: { reconcile: Function }
 ): FastifyPluginAsync => {
   return async (fastify) => {
@@ -590,9 +651,17 @@ export const createAiReconcileRoutes = (
         });
       }
 
-      const result = engine.reconcile(businessData, channelData, batch.batch_type as any, {
-        templateId: body.template_id as string | undefined,
-      });
+      const template = await resolveReconTemplate(
+        prisma,
+        batch.batch_type as BatchType,
+        body.template_id as string | undefined,
+      );
+      const result = engine.reconcile(
+        businessData,
+        channelData,
+        batch.batch_type as any,
+        template ? { template } : {},
+      );
 
       // ??????
       for (const detail of result.details) {

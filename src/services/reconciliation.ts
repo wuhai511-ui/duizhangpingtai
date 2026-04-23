@@ -4,6 +4,9 @@ import type {
   Pagination,
   ReconciliationBatch,
   ReconciliationDetailItem,
+  ReconBatchType,
+  ReconTemplateConfig,
+  ReconTemplateConfigItem,
 } from '../types';
 
 export const reconciliationApi = {
@@ -28,6 +31,45 @@ export const reconciliationApi = {
     const response = await api.post<ApiResponse<{ batch_id: string; stats: any }>>(
       `/reconciliation/batches/${id}/rerun`,
       { template_id: templateId },
+    );
+    return response.data.data;
+  },
+
+  listTemplateConfigs: async (batchType?: ReconBatchType): Promise<ReconTemplateConfigItem[]> => {
+    const response = await api.get<ApiResponse<ReconTemplateConfigItem[]>>(
+      '/reconciliation/template-configs',
+      {
+        params: batchType ? { batch_type: batchType } : undefined,
+      },
+    );
+    return response.data.data;
+  },
+
+  createTemplateConfig: async (payload: {
+    template: ReconTemplateConfig;
+    is_default?: boolean;
+  }): Promise<ReconTemplateConfigItem> => {
+    const response = await api.post<ApiResponse<ReconTemplateConfigItem>>(
+      '/reconciliation/template-configs',
+      payload,
+    );
+    return response.data.data;
+  },
+
+  updateTemplateConfig: async (
+    id: string,
+    payload: { template: ReconTemplateConfig; is_default?: boolean },
+  ): Promise<ReconTemplateConfigItem> => {
+    const response = await api.put<ApiResponse<ReconTemplateConfigItem>>(
+      `/reconciliation/template-configs/${id}`,
+      payload,
+    );
+    return response.data.data;
+  },
+
+  deleteTemplateConfig: async (id: string): Promise<{ id: string }> => {
+    const response = await api.delete<ApiResponse<{ id: string }>>(
+      `/reconciliation/template-configs/${id}`,
     );
     return response.data.data;
   },

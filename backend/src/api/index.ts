@@ -5,6 +5,7 @@ import { PrismaClient } from '@prisma/client';
 import { healthRoutes } from './routes/health.js';
 import { createFileRoutes } from '../business/routes/file.js';
 import { createReconciliationRoutes } from '../business/routes/reconciliation.js';
+import { createReconciliationTemplateConfigRoutes } from '../business/routes/reconciliation-template-config.js';
 import { createReconciliationTicketRoutes } from '../business/routes/reconciliation-ticket.js';
 import { createReconciliationRuleRoutes } from '../business/routes/reconciliation-rule.js';
 import { createReconciliationPostProcessRoutes } from '../business/routes/reconciliation-post-process.js';
@@ -82,6 +83,7 @@ export async function createServer(): Promise<FastifyInstance> {
   await fastify.register(healthRoutes, { prefix });
   await fastify.register(createFileRoutes(processor), { prefix });
   await fastify.register(createReconciliationRoutes(prisma), { prefix });
+  await fastify.register(createReconciliationTemplateConfigRoutes(prisma), { prefix });
   await fastify.register(createReconciliationTicketRoutes(prisma), { prefix });
   await fastify.register(createReconciliationRuleRoutes(prisma), { prefix });
   await fastify.register(createReconciliationPostProcessRoutes(prisma), { prefix });

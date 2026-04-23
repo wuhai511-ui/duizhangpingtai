@@ -218,6 +218,69 @@ export interface ReconciliationDetailItem {
   created_at?: string;
 }
 
+export type ReconBatchType = 'ORDER_VS_JY' | 'JY_VS_JS';
+
+export type ReconMatchMode = 'exact' | 'prefix' | 'suffix' | 'regex' | 'fuzzy' | 'contains';
+
+export interface ReconTemplateConfig {
+  id: string;
+  name: string;
+  batch_type: ReconBatchType;
+  description?: string;
+  business_source: {
+    table: 'BusinessOrder' | 'JyTransaction';
+    file_type: 'BUSINESS_ORDER' | 'JY';
+  };
+  channel_source: {
+    table: 'JyTransaction' | 'JsSettlement';
+    file_type: 'JY' | 'JS';
+  };
+  primary_keys: Array<{
+    mode: ReconMatchMode;
+    business_field: string;
+    channel_field: string;
+    weight: number;
+    pattern?: string;
+    length?: number;
+  }>;
+  auxiliary_fields: Array<{
+    business_field: string;
+    channel_field: string;
+    required: boolean;
+    mode: 'exact' | 'contains' | 'range';
+    range?: { min?: number; max?: number };
+  }>;
+  amount_check: {
+    business_field: string;
+    channel_field: string;
+    tolerance?: number;
+    strict?: boolean;
+  };
+  date_check: {
+    business_field: string;
+    channel_field: string;
+    rolling_days?: number;
+    allow_empty_date?: boolean;
+  };
+  additional_rules?: Array<{
+    name: string;
+    description?: string;
+    type: 'filter' | 'transform' | 'validate';
+    target_field: string;
+    config: Record<string, unknown>;
+  }>;
+}
+
+export interface ReconTemplateConfigItem {
+  id: string;
+  template: ReconTemplateConfig;
+  is_default: boolean;
+  source: 'builtin' | 'custom';
+  readonly: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface SavedTemplate {
   id: string;
   name: string;
