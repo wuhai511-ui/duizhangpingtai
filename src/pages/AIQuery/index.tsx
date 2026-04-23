@@ -26,12 +26,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import MappingReviewModal from '../../components/template-mapping/MappingReviewModal';
 import { aiApi } from '../../services/ai';
 import { fileApi } from '../../services/file';
+import { reconciliationApi } from '../../services/reconciliation';
 import type {
   AIConversation,
   AIConversationMessage,
   ConversationReconcileResult,
   FileAnalyzeResult,
   FileUploadResult,
+  ReconTemplateConfigItem,
   SaveBusinessOrderTemplatePayload,
   TemplateAnalyzeResult,
   TemplateMappingConfig,
@@ -294,6 +296,7 @@ const AIQuery: React.FC = () => {
   const [pendingBusinessFile, setPendingBusinessFile] = useState<File | null>(null);
   const [selectedBusinessFileId, setSelectedBusinessFileId] = useState<string>();
   const [selectedChannelFileId, setSelectedChannelFileId] = useState<string>();
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>();
   const [pendingChannelPrimaryKey, setPendingChannelPrimaryKey] = useState<string>('merchant_order_no');
   const [channelPrimaryKeyByFileId, setChannelPrimaryKeyByFileId] = useState<Record<string, string>>({});
 
@@ -329,6 +332,22 @@ const AIQuery: React.FC = () => {
     },
     enabled: selectedConversationId === 'legacy',
   });
+
+  const reconTemplatesQuery = useQuery({
+    queryKey: ['recon-template-configs', 'ORDER_VS_JY'],
+    queryFn: () => reconciliationApi.listTemplateConfigs('ORDER_VS_JY'),
+  });
+
+  useEffect(() => {
+    if (selectedTemplateId || !reconTemplatesQuery.data || reconTemplatesQuery.data.length === 0) {
+      return;
+    }
+    const defaultTemplate =
+      reconTemplatesQuery.data.find((item) => item.is_default) || reconTemplatesQuery.data[0];
+    if (defaultTemplate?.id) {
+      setSelectedTemplateId(defaultTemplate.id);
+    }
+  }, [reconTemplatesQuery.data, selectedTemplateId]);
 
   useEffect(() => {
     if (selectedConversationId || !conversationsQuery.data) {
@@ -719,6 +738,7 @@ const AIQuery: React.FC = () => {
         channel_file_id: channelFile.file_id,
         batch_type: 'ORDER_VS_JY',
         channel_primary_key: channelPrimaryKey,
+        template_id: selectedTemplateId,
       });
     },
     onSuccess: async (result: ConversationReconcileResult) => {
@@ -798,7 +818,7 @@ const AIQuery: React.FC = () => {
   };
 
   const openReconciliationDetail = (batchId: string) => {
-    window.location.href = `/reconciliation-batch.html?batch_id=${encodeURIComponent(batchId)}`;
+    window.location.href = `/reconciliation/batches/${encodeURIComponent(batchId)}`;
   };
 
   const pendingInsightList = useMemo(() => {
@@ -808,6 +828,15 @@ const AIQuery: React.FC = () => {
       insight: pendingInsights[getPendingFileKey(file)],
     }));
   }, [pendingFiles, pendingInsights]);
+
+  const templateOptions = useMemo(
+    () =>
+      (reconTemplatesQuery.data || []).map((item: ReconTemplateConfigItem) => ({
+        value: item.id,
+        label: `${item.template.name}${item.is_default ? '（默认）' : ''}`,
+      })),
+    [reconTemplatesQuery.data],
+  );
 
   return (
     <div>
@@ -890,7 +919,7 @@ const AIQuery: React.FC = () => {
                   {question}
                 </Button>
               ))}
-              <Button onClick={() => (window.location.href = '/reconciliation.html')}>查看对账管理</Button>
+              <Button onClick={() => (window.location.href = '/reconciliation')}>查看对账管理</Button>
               <Button onClick={() => setUploadModalVisible(true)} disabled={!selectedConversation}>
                 上传对账文件
               </Button>
@@ -1030,6 +1059,19 @@ const AIQuery: React.FC = () => {
                   showIcon
                   message="支持手动指定比对双方，同时会自动识别微信、拉卡拉、支付宝、美团、抖音、银行流水等来源标签。"
                 />
+
+                <div>
+                  <Text strong>对账模板</Text>
+                  <Select
+                    style={{ width: '100%', marginTop: 8 }}
+                    placeholder="请选择对账模板"
+                    value={selectedTemplateId}
+                    onChange={setSelectedTemplateId}
+                    options={templateOptions}
+                    loading={reconTemplatesQuery.isLoading}
+                    allowClear
+                  />
+                </div>
 
                 <div>
                   <Text strong>业务方文件</Text>

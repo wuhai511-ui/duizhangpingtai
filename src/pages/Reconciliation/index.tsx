@@ -21,7 +21,7 @@ const STATUS_OPTIONS = [
 ];
 
 function openBatchDetail(id: string) {
-  window.location.href = `/reconciliation-batch.html?batch_id=${encodeURIComponent(id)}`;
+  window.location.href = `/reconciliation/batches/${encodeURIComponent(id)}`;
 }
 
 function formatStatus(value: number): { label: string; color: string } {
