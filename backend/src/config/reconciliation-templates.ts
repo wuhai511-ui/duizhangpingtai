@@ -49,6 +49,12 @@ export interface ReconTemplate {
   
   // 其他校验规则
   additional_rules?: ReconRule[];
+
+  // 字段映射（上传字段/源字段 -> 数据库字段）
+  field_mappings?: {
+    business?: ReconFieldMapping[];
+    channel?: ReconFieldMapping[];
+  };
 }
 
 export interface ReconKeyMatch {
@@ -101,6 +107,12 @@ export interface ReconRule {
   
   // 规则配置
   config: Record<string, unknown>;
+}
+
+export interface ReconFieldMapping {
+  source_field: string;
+  target_field: string;
+  transform?: 'identity' | 'trim' | 'upper' | 'lower' | 'yuan_to_fen' | 'fen_identity';
 }
 
 // 预设模板

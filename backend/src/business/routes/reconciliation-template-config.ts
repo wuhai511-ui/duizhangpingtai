@@ -50,6 +50,12 @@ function validateTemplate(template: any): string | null {
 }
 
 function normalizeTemplate(template: any, fallbackId?: string): ReconTemplate {
+  const businessMappings = Array.isArray(template?.field_mappings?.business)
+    ? template.field_mappings.business
+    : [];
+  const channelMappings = Array.isArray(template?.field_mappings?.channel)
+    ? template.field_mappings.channel
+    : [];
   return {
     id: String(template.id || fallbackId || `custom_${Date.now()}`),
     name: String(template.name || '自定义模板'),
@@ -62,6 +68,10 @@ function normalizeTemplate(template: any, fallbackId?: string): ReconTemplate {
     amount_check: template.amount_check,
     date_check: template.date_check,
     additional_rules: Array.isArray(template.additional_rules) ? template.additional_rules : undefined,
+    field_mappings: {
+      business: businessMappings,
+      channel: channelMappings,
+    },
   };
 }
 

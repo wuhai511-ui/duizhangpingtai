@@ -1,4 +1,10 @@
-import { type ReconTemplate, type ReconKeyMatch, type ReconAuxField, DEFAULT_RECON_TEMPLATES } from '../../config/reconciliation-templates.js';
+import {
+  type ReconTemplate,
+  type ReconKeyMatch,
+  type ReconAuxField,
+  type ReconFieldMapping,
+  DEFAULT_RECON_TEMPLATES,
+} from '../../config/reconciliation-templates.js';
 
 export enum ResultType {
   MATCH = 'MATCH',
@@ -46,6 +52,41 @@ export interface ReconOptions {
 }
 
 export class ReconciliationEngine {
+  private applyFieldTransform(
+    value: unknown,
+    transform: ReconFieldMapping['transform'] = 'identity',
+  ): unknown {
+    switch (transform) {
+      case 'trim':
+        return String(value ?? '').trim();
+      case 'upper':
+        return String(value ?? '').toUpperCase();
+      case 'lower':
+        return String(value ?? '').toLowerCase();
+      case 'yuan_to_fen':
+        return this.normalizeAmount(value, 'yuan_to_fen').toString();
+      case 'fen_identity':
+        return this.normalizeAmount(value, 'fen_identity').toString();
+      case 'identity':
+      default:
+        return value;
+    }
+  }
+
+  private applyFieldMappings(data: any[], mappings?: ReconFieldMapping[]): any[] {
+    if (!Array.isArray(mappings) || mappings.length === 0) return data;
+    return data.map((item) => {
+      const next = { ...item };
+      for (const mapRule of mappings) {
+        if (!mapRule?.source_field || !mapRule?.target_field) continue;
+        const sourceValue = this.getFieldValue(item, mapRule.source_field);
+        if (sourceValue === undefined || sourceValue === null || sourceValue === '') continue;
+        next[mapRule.target_field] = this.applyFieldTransform(sourceValue, mapRule.transform);
+      }
+      return next;
+    });
+  }
+
   private normalizeAmount(
     value: unknown,
     transform: 'auto' | 'fen_identity' | 'yuan_to_fen' = 'auto',
@@ -292,6 +333,15 @@ export class ReconciliationEngine {
     channelData: any[],
     template: ReconTemplate
   ): ReconResult {
+    const normalizedBusinessData = this.applyFieldMappings(
+      businessData,
+      template.field_mappings?.business,
+    );
+    const normalizedChannelData = this.applyFieldMappings(
+      channelData,
+      template.field_mappings?.channel,
+    );
+
     const stats: ReconStats = {
       total: 0,
       match: 0,
@@ -306,15 +356,15 @@ export class ReconciliationEngine {
     const matchedChannel = new Set<number>();
 
     // 为渠道方建立多字段索引
-    const channelIndexes = this.buildChannelIndexes(channelData, template);
+    const channelIndexes = this.buildChannelIndexes(normalizedChannelData, template);
 
     // 第一轮：按模板主键逐级匹配
     // 按权重排序主键
     const sortedKeys = [...template.primary_keys].sort((a, b) => b.weight - a.weight);
 
-    for (let bi = 0; bi < businessData.length; bi++) {
+    for (let bi = 0; bi < normalizedBusinessData.length; bi++) {
       if (matchedBusiness.has(bi)) continue;
-      const businessItem = businessData[bi];
+      const businessItem = normalizedBusinessData[bi];
 
       for (const keyMatch of sortedKeys) {
         const rawValue = this.getFieldValue(businessItem, keyMatch.business_field);
@@ -322,13 +372,13 @@ export class ReconciliationEngine {
         const businessValue = String(rawValue);
 
         // 根据匹配模式在渠道方索引中查找
-        const channelCandidates = this.findChannelCandidates(
-          businessValue, keyMatch, channelIndexes, channelData
+          const channelCandidates = this.findChannelCandidates(
+          businessValue, keyMatch, channelIndexes, normalizedChannelData
         );
 
         for (const ci of channelCandidates) {
           if (matchedChannel.has(ci)) continue;
-          const channelItem = channelData[ci];
+          const channelItem = normalizedChannelData[ci];
 
           // 校验辅助字段
           if (!this.checkAuxiliaryFields(businessItem, channelItem, template.auxiliary_fields)) {
@@ -426,9 +476,9 @@ export class ReconciliationEngine {
     }
 
     // 剩余未匹配：长款
-    for (let bi = 0; bi < businessData.length; bi++) {
+    for (let bi = 0; bi < normalizedBusinessData.length; bi++) {
       if (matchedBusiness.has(bi)) continue;
-      const businessItem = businessData[bi];
+      const businessItem = normalizedBusinessData[bi];
       stats.total++;
       stats.long++;
       const businessAmount = this.normalizeAmount(
@@ -444,9 +494,9 @@ export class ReconciliationEngine {
     }
 
     // 剩余未匹配：短款
-    for (let ci = 0; ci < channelData.length; ci++) {
+    for (let ci = 0; ci < normalizedChannelData.length; ci++) {
       if (matchedChannel.has(ci)) continue;
-      const channelItem = channelData[ci];
+      const channelItem = normalizedChannelData[ci];
       stats.total++;
       stats.short++;
       const channelAmount = this.normalizeAmount(

@@ -271,6 +271,18 @@ export interface ReconTemplateConfig {
     target_field: string;
     config: Record<string, unknown>;
   }>;
+  field_mappings?: {
+    business?: Array<{
+      source_field: string;
+      target_field: string;
+      transform?: 'identity' | 'trim' | 'upper' | 'lower' | 'yuan_to_fen' | 'fen_identity';
+    }>;
+    channel?: Array<{
+      source_field: string;
+      target_field: string;
+      transform?: 'identity' | 'trim' | 'upper' | 'lower' | 'yuan_to_fen' | 'fen_identity';
+    }>;
+  };
 }
 
 export interface ReconTemplateConfigItem {
