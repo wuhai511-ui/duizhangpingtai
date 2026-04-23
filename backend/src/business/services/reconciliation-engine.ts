@@ -52,6 +52,13 @@ export interface ReconOptions {
 }
 
 export class ReconciliationEngine {
+  private normalizeTolerance(value: unknown): bigint {
+    if (value === null || value === undefined || value === '') return 0n;
+    const numeric = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(numeric)) return 0n;
+    return BigInt(Math.max(0, Math.round(numeric)));
+  }
+
   private applyFieldTransform(
     value: unknown,
     transform: ReconFieldMapping['transform'] = 'identity',
@@ -394,7 +401,7 @@ export class ReconciliationEngine {
             this.getFieldValue(channelItem, template.amount_check.channel_field),
             template.amount_check.channel_transform ?? 'auto',
           );
-          const tolerance = BigInt(template.amount_check.tolerance || 0);
+          const tolerance = this.normalizeTolerance(template.amount_check.tolerance);
 
           // 校验日期
           const businessDate = String(this.getFieldValue(businessItem, template.date_check.business_field) || '').trim();
