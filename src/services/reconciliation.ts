@@ -42,6 +42,8 @@ export const reconciliationApi = {
       channel_field: string;
       mode?: 'exact' | 'prefix' | 'suffix' | 'regex' | 'fuzzy' | 'contains';
       rerun?: boolean;
+      business_amount_unit?: 'fen' | 'yuan';
+      channel_amount_unit?: 'fen' | 'yuan';
     },
   ): Promise<{ batch_id: string; stats?: any; match_key_config?: any }> => {
     const response = await api.post<ApiResponse<{ batch_id: string; stats?: any; match_key_config?: any }>>(

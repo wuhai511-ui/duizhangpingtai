@@ -53,6 +53,22 @@ const MATCH_MODE_OPTIONS = [
   { label: 'suffix', value: 'suffix' },
 ];
 
+const AMOUNT_UNIT_OPTIONS = [
+  { label: '元', value: 'yuan' },
+  { label: '分', value: 'fen' },
+];
+
+function formatAmountFenToYuan(value: unknown): string {
+  if (value === null || value === undefined || value === '') {
+    return '-';
+  }
+  const numeric = typeof value === 'number' ? value : Number(String(value));
+  if (!Number.isFinite(numeric)) {
+    return String(value);
+  }
+  return (numeric / 100).toFixed(2);
+}
+
 const ReconciliationDetailPage: React.FC = () => {
   const batchId = useBatchIdFromLocation();
   const [resultType, setResultType] = useState('');
@@ -61,6 +77,8 @@ const ReconciliationDetailPage: React.FC = () => {
   const [businessField, setBusinessField] = useState('order_no');
   const [channelField, setChannelField] = useState('merchant_order_no');
   const [matchMode, setMatchMode] = useState<'exact' | 'contains' | 'prefix' | 'suffix'>('exact');
+  const [businessAmountUnit, setBusinessAmountUnit] = useState<'fen' | 'yuan'>('fen');
+  const [channelAmountUnit, setChannelAmountUnit] = useState<'fen' | 'yuan'>('fen');
 
   const batchQuery = useQuery({
     queryKey: ['reconciliation-batch', batchId],
@@ -94,6 +112,8 @@ const ReconciliationDetailPage: React.FC = () => {
         business_field: businessField,
         channel_field: channelField,
         mode: matchMode,
+        business_amount_unit: businessAmountUnit,
+        channel_amount_unit: channelAmountUnit,
         rerun: true,
       }),
     onSuccess: () => {
@@ -118,9 +138,27 @@ const ReconciliationDetailPage: React.FC = () => {
         width: 140,
         render: (value: string) => <Tag>{value}</Tag>,
       },
-      { title: '业务金额', dataIndex: 'business_amount', key: 'business_amount', width: 120 },
-      { title: '渠道金额', dataIndex: 'channel_amount', key: 'channel_amount', width: 120 },
-      { title: '差异金额', dataIndex: 'diff_amount', key: 'diff_amount', width: 120 },
+      {
+        title: '业务金额(元)',
+        dataIndex: 'business_amount',
+        key: 'business_amount',
+        width: 140,
+        render: (value: unknown) => formatAmountFenToYuan(value),
+      },
+      {
+        title: '渠道金额(元)',
+        dataIndex: 'channel_amount',
+        key: 'channel_amount',
+        width: 140,
+        render: (value: unknown) => formatAmountFenToYuan(value),
+      },
+      {
+        title: '差异金额(元)',
+        dataIndex: 'diff_amount',
+        key: 'diff_amount',
+        width: 140,
+        render: (value: unknown) => formatAmountFenToYuan(value),
+      },
       { title: '匹配日期', dataIndex: 'match_date', key: 'match_date', width: 140 },
       { title: '匹配主键', dataIndex: 'match_key', key: 'match_key', width: 220 },
       { title: '匹配方式', dataIndex: 'match_mode', key: 'match_mode', width: 140 },
@@ -155,7 +193,9 @@ const ReconciliationDetailPage: React.FC = () => {
               <Descriptions.Item label="对账日期">{batchQuery.data.check_date || '-'}</Descriptions.Item>
               <Descriptions.Item label="状态">{batchQuery.data.status}</Descriptions.Item>
               <Descriptions.Item label="总记录数">{batchQuery.data.record_count}</Descriptions.Item>
-              <Descriptions.Item label="总金额">{batchQuery.data.total_amount}</Descriptions.Item>
+              <Descriptions.Item label="总金额(元)">
+                {formatAmountFenToYuan(batchQuery.data.total_amount)}
+              </Descriptions.Item>
               <Descriptions.Item label="匹配">{batchQuery.data.match_count ?? 0}</Descriptions.Item>
               <Descriptions.Item label="滚动匹配">{batchQuery.data.rolling_count ?? 0}</Descriptions.Item>
               <Descriptions.Item label="长款">{batchQuery.data.long_count ?? 0}</Descriptions.Item>
@@ -195,6 +235,20 @@ const ReconciliationDetailPage: React.FC = () => {
                   value={matchMode}
                   onChange={(value) => setMatchMode(value as 'exact' | 'contains' | 'prefix' | 'suffix')}
                   options={MATCH_MODE_OPTIONS}
+                />
+                <Select
+                  style={{ width: 140 }}
+                  value={businessAmountUnit}
+                  onChange={(value) => setBusinessAmountUnit(value as 'fen' | 'yuan')}
+                  options={AMOUNT_UNIT_OPTIONS}
+                  placeholder="业务单位"
+                />
+                <Select
+                  style={{ width: 140 }}
+                  value={channelAmountUnit}
+                  onChange={(value) => setChannelAmountUnit(value as 'fen' | 'yuan')}
+                  options={AMOUNT_UNIT_OPTIONS}
+                  placeholder="渠道单位"
                 />
                 <Button
                   type="primary"
