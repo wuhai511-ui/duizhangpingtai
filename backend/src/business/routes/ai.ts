@@ -133,35 +133,15 @@ function applyChannelPrimaryKeyOverride(
   };
 }
 
-function toTransformByUnit(
-  unit?: string,
-): 'auto' | 'fen_identity' | 'yuan_to_fen' {
-  if (unit === 'fen') return 'fen_identity';
-  if (unit === 'yuan') return 'yuan_to_fen';
-  return 'auto';
-}
-
-function applyAmountUnitOverride(
-  template: ReconTemplate | null,
-  units?: { business_amount_unit?: string; channel_amount_unit?: string },
-): ReconTemplate | null {
-  if (!template || !template.amount_check) return template;
-  const businessUnit = String(units?.business_amount_unit || '').trim().toLowerCase();
-  const channelUnit = String(units?.channel_amount_unit || '').trim().toLowerCase();
-  const hasBusiness = businessUnit === 'fen' || businessUnit === 'yuan';
-  const hasChannel = channelUnit === 'fen' || channelUnit === 'yuan';
-  if (!hasBusiness && !hasChannel) return template;
-
+function normalizeStoredAmountTransform(template: ReconTemplate | null): ReconTemplate | null {
+  if (!template?.amount_check) return template;
+  // 文件导入后金额已统一存储为“分”，对账阶段强制按分比较，避免重复换算。
   return {
     ...template,
     amount_check: {
       ...template.amount_check,
-      business_transform: hasBusiness
-        ? toTransformByUnit(businessUnit)
-        : template.amount_check.business_transform ?? 'auto',
-      channel_transform: hasChannel
-        ? toTransformByUnit(channelUnit)
-        : template.amount_check.channel_transform ?? 'auto',
+      business_transform: 'fen_identity',
+      channel_transform: 'fen_identity',
     },
   };
 }
@@ -750,10 +730,7 @@ export const createAiReconcileRoutes = (
         batch.batch_type as BatchType,
         body.channel_primary_key as string | undefined,
       );
-      const templateWithAmountUnit = applyAmountUnitOverride(templateWithPrimaryKey, {
-        business_amount_unit: body.business_amount_unit as string | undefined,
-        channel_amount_unit: body.channel_amount_unit as string | undefined,
-      });
+      const templateWithAmountUnit = normalizeStoredAmountTransform(templateWithPrimaryKey);
       const primaryKeyConfig = extractPrimaryKeyConfig(templateWithPrimaryKey);
       if (primaryKeyConfig) {
         await prisma.reconProcessLog.create({

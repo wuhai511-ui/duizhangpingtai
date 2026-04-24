@@ -53,10 +53,6 @@ const MATCH_MODE_OPTIONS = [
   { label: 'suffix', value: 'suffix' },
 ];
 
-const AMOUNT_UNIT_OPTIONS = [
-  { label: '元', value: 'yuan' },
-  { label: '分', value: 'fen' },
-];
 
 function formatAmountFenToYuan(value: unknown): string {
   if (value === null || value === undefined || value === '') {
@@ -77,8 +73,6 @@ const ReconciliationDetailPage: React.FC = () => {
   const [businessField, setBusinessField] = useState('order_no');
   const [channelField, setChannelField] = useState('merchant_order_no');
   const [matchMode, setMatchMode] = useState<'exact' | 'contains' | 'prefix' | 'suffix'>('exact');
-  const [businessAmountUnit, setBusinessAmountUnit] = useState<'fen' | 'yuan'>('fen');
-  const [channelAmountUnit, setChannelAmountUnit] = useState<'fen' | 'yuan'>('fen');
 
   const batchQuery = useQuery({
     queryKey: ['reconciliation-batch', batchId],
@@ -112,8 +106,6 @@ const ReconciliationDetailPage: React.FC = () => {
         business_field: businessField,
         channel_field: channelField,
         mode: matchMode,
-        business_amount_unit: businessAmountUnit,
-        channel_amount_unit: channelAmountUnit,
         rerun: true,
       }),
     onSuccess: () => {
@@ -235,20 +227,6 @@ const ReconciliationDetailPage: React.FC = () => {
                   value={matchMode}
                   onChange={(value) => setMatchMode(value as 'exact' | 'contains' | 'prefix' | 'suffix')}
                   options={MATCH_MODE_OPTIONS}
-                />
-                <Select
-                  style={{ width: 140 }}
-                  value={businessAmountUnit}
-                  onChange={(value) => setBusinessAmountUnit(value as 'fen' | 'yuan')}
-                  options={AMOUNT_UNIT_OPTIONS}
-                  placeholder="业务单位"
-                />
-                <Select
-                  style={{ width: 140 }}
-                  value={channelAmountUnit}
-                  onChange={(value) => setChannelAmountUnit(value as 'fen' | 'yuan')}
-                  options={AMOUNT_UNIT_OPTIONS}
-                  placeholder="渠道单位"
                 />
                 <Button
                   type="primary"

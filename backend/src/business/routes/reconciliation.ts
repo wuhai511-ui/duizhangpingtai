@@ -153,43 +153,17 @@ function extractMatchKeyFromTemplate(template: ReconTemplate | null): MatchKeyCo
   };
 }
 
-function toTransformByUnit(
-  unit?: string,
-): 'auto' | 'fen_identity' | 'yuan_to_fen' {
-  if (unit === 'fen') return 'fen_identity';
-  if (unit === 'yuan') return 'yuan_to_fen';
-  return 'auto';
-}
-
-function applyAmountUnitOverride(
-  template: ReconTemplate | null,
-  override: {
-    business_amount_unit?: string;
-    channel_amount_unit?: string;
-  },
-): ReconTemplate | null {
-  if (!template || !template.amount_check) {
+function normalizeStoredAmountTransform(template: ReconTemplate | null): ReconTemplate | null {
+  if (!template?.amount_check) {
     return template;
   }
-
-  const businessUnit = String(override.business_amount_unit || '').trim().toLowerCase();
-  const channelUnit = String(override.channel_amount_unit || '').trim().toLowerCase();
-  const hasBusiness = businessUnit === 'fen' || businessUnit === 'yuan';
-  const hasChannel = channelUnit === 'fen' || channelUnit === 'yuan';
-  if (!hasBusiness && !hasChannel) {
-    return template;
-  }
-
+  // BusinessOrder/JyTransaction 入库后金额统一使用“分”，对账阶段不应再次做元转分。
   return {
     ...template,
     amount_check: {
       ...template.amount_check,
-      business_transform: hasBusiness
-        ? toTransformByUnit(businessUnit)
-        : template.amount_check.business_transform ?? 'auto',
-      channel_transform: hasChannel
-        ? toTransformByUnit(channelUnit)
-        : template.amount_check.channel_transform ?? 'auto',
+      business_transform: 'fen_identity',
+      channel_transform: 'fen_identity',
     },
   };
 }
@@ -543,10 +517,7 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
         channel_field: body.channel_field,
         mode: body.mode,
       });
-      const templateWithOverride = applyAmountUnitOverride(templateWithKeyOverride, {
-        business_amount_unit: body.business_amount_unit,
-        channel_amount_unit: body.channel_amount_unit,
-      });
+      const templateWithOverride = normalizeStoredAmountTransform(templateWithKeyOverride);
       const usedMatchKey = extractMatchKeyFromTemplate(templateWithOverride);
       if (usedMatchKey) {
         await prisma.reconProcessLog.create({
@@ -554,18 +525,6 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
             batch_id: id,
             action: 'BATCH_MATCH_KEY_USED',
             action_data: JSON.stringify(usedMatchKey),
-          },
-        });
-      }
-      if (body.business_amount_unit || body.channel_amount_unit) {
-        await prisma.reconProcessLog.create({
-          data: {
-            batch_id: id,
-            action: 'BATCH_AMOUNT_UNIT_USED',
-            action_data: JSON.stringify({
-              business_amount_unit: body.business_amount_unit || null,
-              channel_amount_unit: body.channel_amount_unit || null,
-            }),
           },
         });
       }
@@ -696,10 +655,6 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
       return ok({
         batch_id: id,
         match_key_config: matchKeyConfig,
-        amount_unit_config: {
-          business_amount_unit: body.business_amount_unit || null,
-          channel_amount_unit: body.channel_amount_unit || null,
-        },
         rerun: false,
       });
     }
@@ -711,8 +666,6 @@ export const reconciliationRoutes: FastifyPluginAsync = async (fastify) => {
         business_field: businessField,
         channel_field: channelField,
         mode,
-        business_amount_unit: body.business_amount_unit,
-        channel_amount_unit: body.channel_amount_unit,
       },
     });
 
