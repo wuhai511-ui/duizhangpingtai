@@ -6,6 +6,7 @@ import {
   Input,
   List,
   Modal,
+  Radio,
   Select,
   Space,
   Spin,
@@ -321,6 +322,7 @@ const AIQuery: React.FC = () => {
   const [pendingChannelPrimaryKey, setPendingChannelPrimaryKey] = useState<string>('merchant_order_no');
   const [pendingChannelAmountUnit, setPendingChannelAmountUnit] = useState<'fen' | 'yuan'>('yuan');
   const [pendingChannelAmountUnitConfirmed, setPendingChannelAmountUnitConfirmed] = useState(false);
+  const [amountUnitPromptVisible, setAmountUnitPromptVisible] = useState(false);
   const [channelPrimaryKeyByFileId, setChannelPrimaryKeyByFileId] = useState<Record<string, string>>({});
   const [channelAmountUnitByFileId, setChannelAmountUnitByFileId] = useState<
     Record<string, 'fen' | 'yuan'>
@@ -898,7 +900,7 @@ const AIQuery: React.FC = () => {
       return;
     }
     if (selectedFileType === 'JY' && !pendingChannelAmountUnitConfirmed) {
-      messageApi.warning('请先确认渠道交易金额单位（元/分）');
+      setAmountUnitPromptVisible(true);
       return;
     }
 
@@ -921,6 +923,17 @@ const AIQuery: React.FC = () => {
     }
 
     saveTemplateMutation.mutate({ ...payload, file: pendingBusinessFile });
+  };
+
+  const handleAmountUnitConfirm = () => {
+    setPendingChannelAmountUnitConfirmed(true);
+    setAmountUnitPromptVisible(false);
+    uploadMutation.mutate({
+      files: pendingFiles.map((file) => file.originFileObj).filter(Boolean) as File[],
+      fileType: selectedFileType,
+      channelPrimaryKey: selectedFileType === 'JY' ? pendingChannelPrimaryKey : undefined,
+      channelAmountUnit: selectedFileType === 'JY' ? pendingChannelAmountUnit : undefined,
+    });
   };
 
   const openReconciliationDetail = (batchId: string) => {
@@ -1249,7 +1262,10 @@ const AIQuery: React.FC = () => {
       <Modal
         title="上传文件"
         open={uploadModalVisible}
-        onCancel={() => setUploadModalVisible(false)}
+        onCancel={() => {
+          setUploadModalVisible(false);
+          setAmountUnitPromptVisible(false);
+        }}
         onOk={handleConfirmUpload}
         okText="开始处理"
         cancelText="取消"
@@ -1276,19 +1292,21 @@ const AIQuery: React.FC = () => {
                 value={pendingChannelAmountUnit}
                 onChange={(value) => {
                   setPendingChannelAmountUnit(value);
-                  setPendingChannelAmountUnitConfirmed(true);
+                  setPendingChannelAmountUnitConfirmed(false);
                 }}
                 options={CHANNEL_AMOUNT_UNIT_OPTIONS}
                 style={{ width: '100%' }}
                 placeholder="请选择渠道账单金额单位"
               />
-              {!pendingChannelAmountUnitConfirmed ? (
-                <Alert
-                  type="warning"
-                  showIcon
-                  message="请确认一次渠道交易金额单位（元/分）后再上传"
-                />
-              ) : null}
+              <Alert
+                type={pendingChannelAmountUnitConfirmed ? 'success' : 'warning'}
+                showIcon
+                message={
+                  pendingChannelAmountUnitConfirmed
+                    ? `已确认渠道金额单位：${pendingChannelAmountUnit === 'fen' ? '分' : '元'}`
+                    : '点击“开始处理”后会再次弹窗确认渠道金额单位'
+                }
+              />
             </Space>
           ) : null}
 
@@ -1344,6 +1362,37 @@ const AIQuery: React.FC = () => {
             showIcon
             message={`当前已支持来源标签：${SOURCE_TEMPLATES.map((item) => item.label).join('、')}`}
           />
+        </Space>
+      </Modal>
+
+      <Modal
+        title="确认渠道金额单位"
+        open={amountUnitPromptVisible}
+        onCancel={() => setAmountUnitPromptVisible(false)}
+        onOk={handleAmountUnitConfirm}
+        okText="确认并上传"
+        cancelText="返回修改"
+        confirmLoading={uploadMutation.isPending}
+      >
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <Alert
+            type="warning"
+            showIcon
+            message="渠道交易文件入库后会统一换算成分，这一步请确认原始文件里的金额单位。"
+          />
+          <Radio.Group
+            value={pendingChannelAmountUnit}
+            onChange={(event) => setPendingChannelAmountUnit(event.target.value)}
+            style={{ width: '100%' }}
+          >
+            <Space direction="vertical">
+              <Radio value="yuan">元：例如 `124.00`、`203.00`</Radio>
+              <Radio value="fen">分：例如 `12400`、`20300`</Radio>
+            </Space>
+          </Radio.Group>
+          <Text type="secondary">
+            当前主键字段：{pendingChannelPrimaryKey || 'merchant_order_no'}
+          </Text>
         </Space>
       </Modal>
 
