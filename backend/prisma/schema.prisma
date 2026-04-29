@@ -466,3 +466,35 @@ model UploadedFile {
   @@index([merchant_id])
 }
 
+model AiConversation {
+  id                     String   @id
+  title                  String
+  merchant_id            String?  @map("merchant_id")
+  created_by             String?  @map("created_by")
+  latest_message_preview String?  @map("latest_message_preview")
+  latest_message_type    String?  @map("latest_message_type")
+  last_message_at        DateTime @map("last_message_at")
+  created_at             DateTime @default(now())
+  updated_at             DateTime @updatedAt
+
+  messages               AiConversationMessage[]
+
+  @@index([created_by, last_message_at])
+  @@map("ai_conversations")
+}
+
+model AiConversationMessage {
+  id              String   @id
+  conversation_id String   @map("conversation_id")
+  role            String
+  message_type    String   @map("message_type")
+  content         String
+  sql_text        String?  @map("sql_text")
+  meta_json       String?  @map("meta_json")
+  created_at      DateTime @default(now())
+
+  conversation    AiConversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+
+  @@index([conversation_id, created_at])
+  @@map("ai_conversation_messages")
+}

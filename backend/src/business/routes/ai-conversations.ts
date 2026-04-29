@@ -7,28 +7,8 @@ interface ApiResponse<T = unknown> {
   data: T;
 }
 
-interface ConversationRecord {
-  id: string;
-  title: string;
-  merchant_id?: string | null;
-  created_by?: string | null;
-  latest_message_preview?: string | null;
-  latest_message_type?: string | null;
-  last_message_at: string;
-  created_at: string;
-  updated_at: string;
-}
-
-interface ConversationMessage {
-  id: string;
-  conversation_id: string;
-  role: 'user' | 'assistant';
-  message_type: 'text' | 'sql_result' | 'file_notice' | 'reconcile_result';
-  content: string;
-  sql_text?: string | null;
-  meta_json?: Record<string, unknown> | null;
-  created_at: string;
-}
+type MessageType = 'text' | 'sql_result' | 'file_notice' | 'reconcile_result';
+type MessageRole = 'user' | 'assistant';
 
 function ok<T>(data: T): ApiResponse<T> {
   return { code: 0, message: 'success', data };
@@ -38,59 +18,48 @@ function err(code: number, message: string): ApiResponse<null> {
   return { code, message, data: null };
 }
 
-const conversations = new Map<string, ConversationRecord>();
-const messages = new Map<string, ConversationMessage[]>();
-
 function getUserId(request: any): string {
   return request.user?.id || 'anonymous';
 }
 
-function syncConversation(conversationId: string): ConversationRecord | undefined {
-  const conversation = conversations.get(conversationId);
-  if (!conversation) {
-    return undefined;
-  }
-
-  const conversationMessages = messages.get(conversationId) || [];
-  const lastMessage = conversationMessages[conversationMessages.length - 1];
-
-  if (lastMessage) {
-    conversation.updated_at = lastMessage.created_at;
-    conversation.last_message_at = lastMessage.created_at;
-    conversation.latest_message_preview =
-      lastMessage.content.length > 120
-        ? `${lastMessage.content.slice(0, 120)}...`
-        : lastMessage.content;
-    conversation.latest_message_type = lastMessage.message_type;
-  }
-
-  return conversation;
+function toIso(value: Date | string | null | undefined): string {
+  if (!value) return new Date().toISOString();
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
-function appendMessages(conversationId: string, ...items: ConversationMessage[]) {
-  const current = messages.get(conversationId) || [];
-  current.push(...items);
-  messages.set(conversationId, current);
-  syncConversation(conversationId);
+function parseMetaJson(value: string | null | undefined): Record<string, unknown> | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 }
 
-function buildMessage(params: {
-  conversationId: string;
-  role: 'user' | 'assistant';
-  messageType: ConversationMessage['message_type'];
-  content: string;
-  sqlText?: string | null;
-  metaJson?: Record<string, unknown> | null;
-}): ConversationMessage {
+function mapConversation(row: any) {
   return {
-    id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
-    conversation_id: params.conversationId,
-    role: params.role,
-    message_type: params.messageType,
-    content: params.content,
-    sql_text: params.sqlText ?? null,
-    meta_json: params.metaJson ?? null,
-    created_at: new Date().toISOString(),
+    id: row.id,
+    title: row.title,
+    merchant_id: row.merchant_id,
+    created_by: row.created_by,
+    latest_message_preview: row.latest_message_preview,
+    latest_message_type: row.latest_message_type,
+    last_message_at: toIso(row.last_message_at),
+    created_at: toIso(row.created_at),
+    updated_at: toIso(row.updated_at),
+  };
+}
+
+function mapMessage(row: any) {
+  return {
+    id: row.id,
+    conversation_id: row.conversation_id,
+    role: row.role,
+    message_type: row.message_type,
+    content: row.content,
+    sql_text: row.sql_text,
+    meta_json: parseMetaJson(row.meta_json),
+    created_at: toIso(row.created_at),
   };
 }
 
@@ -114,73 +83,137 @@ function resolveNoticeContent(files: Array<Record<string, unknown>>): string {
   return `已记录上传文件，共 ${files.length} 个`;
 }
 
-export const createAiConversationRoutes = (_prisma: PrismaClient): FastifyPluginAsync => {
+function buildMessage(params: {
+  conversationId: string;
+  role: MessageRole;
+  messageType: MessageType;
+  content: string;
+  sqlText?: string | null;
+  metaJson?: Record<string, unknown> | null;
+}) {
+  return {
+    id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+    conversation_id: params.conversationId,
+    role: params.role,
+    message_type: params.messageType,
+    content: params.content,
+    sql_text: params.sqlText ?? null,
+    meta_json: params.metaJson ? JSON.stringify(params.metaJson) : null,
+  };
+}
+
+async function appendMessages(prisma: PrismaClient, ...items: ReturnType<typeof buildMessage>[]) {
+  if (items.length === 0) return;
+
+  await prisma.aiConversationMessage.createMany({ data: items });
+
+  const last = items[items.length - 1];
+  await prisma.aiConversation.update({
+    where: { id: last.conversation_id },
+    data: {
+      latest_message_preview:
+        last.content.length > 120 ? `${last.content.slice(0, 120)}...` : last.content,
+      latest_message_type: last.message_type,
+      last_message_at: new Date(),
+    },
+  });
+}
+
+async function getConversation(prisma: PrismaClient, id: string) {
+  return prisma.aiConversation.findUnique({ where: { id } });
+}
+
+async function ensureConversation(
+  prisma: PrismaClient,
+  id: string,
+  userId: string,
+  body?: Record<string, unknown>,
+) {
+  const existing = await getConversation(prisma, id);
+  if (existing) return existing;
+
+  const now = new Date();
+  return prisma.aiConversation.create({
+    data: {
+      id,
+      title: String(body?.title || '默认会话'),
+      merchant_id: body?.merchant_id ? String(body.merchant_id) : null,
+      created_by: userId,
+      latest_message_preview: null,
+      latest_message_type: null,
+      last_message_at: now,
+      created_at: now,
+      updated_at: now,
+    },
+  });
+}
+
+export const createAiConversationRoutes = (prisma: PrismaClient): FastifyPluginAsync => {
   return async (fastify) => {
     fastify.get('/ai/conversations', async (request) => {
       const userId = getUserId(request);
-      const list = Array.from(conversations.values())
-        .filter((item) => item.created_by === userId)
-        .map((item) => syncConversation(item.id) || item)
-        .sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime());
+      const list = await prisma.aiConversation.findMany({
+        where: { created_by: userId },
+        orderBy: { last_message_at: 'desc' },
+      });
 
-      return ok(list);
+      return ok(list.map(mapConversation));
     });
 
     fastify.post('/ai/conversations', async (request) => {
       const body = (request.body as Record<string, unknown> | undefined) || {};
       const userId = getUserId(request);
-      const now = new Date().toISOString();
-      const conversation: ConversationRecord = {
-        id: `conv_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
-        title: String(body.title || '新会话'),
-        merchant_id: body.merchant_id ? String(body.merchant_id) : null,
-        created_by: userId,
-        latest_message_preview: null,
-        latest_message_type: null,
-        last_message_at: now,
-        created_at: now,
-        updated_at: now,
-      };
+      const now = new Date();
+      const conversation = await prisma.aiConversation.create({
+        data: {
+          id: `conv_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+          title: String(body.title || '新会话'),
+          merchant_id: body.merchant_id ? String(body.merchant_id) : null,
+          created_by: userId,
+          latest_message_preview: null,
+          latest_message_type: null,
+          last_message_at: now,
+          created_at: now,
+          updated_at: now,
+        },
+      });
 
-      conversations.set(conversation.id, conversation);
-      messages.set(conversation.id, []);
-
-      return ok(conversation);
+      return ok(mapConversation(conversation));
     });
 
     fastify.get('/ai/conversations/:id', async (request, reply) => {
       const { id } = request.params as { id: string };
-      const conversation = syncConversation(id);
+      const conversation = await getConversation(prisma, id);
 
       if (!conversation) {
         reply.code(404);
         return err(404, 'Conversation not found');
       }
 
-      return ok(conversation);
+      return ok(mapConversation(conversation));
     });
 
     fastify.get('/ai/conversations/:id/messages', async (request, reply) => {
       const { id } = request.params as { id: string };
-      const conversation = conversations.get(id);
+      const conversation = await getConversation(prisma, id);
 
       if (!conversation) {
         reply.code(404);
         return err(404, 'Conversation not found');
       }
 
-      return ok(messages.get(id) || []);
+      const rows = await prisma.aiConversationMessage.findMany({
+        where: { conversation_id: id },
+        orderBy: { created_at: 'asc' },
+      });
+
+      return ok(rows.map(mapMessage));
     });
 
     fastify.post('/ai/conversations/:id/messages', async (request, reply) => {
       const { id } = request.params as { id: string };
       const body = (request.body as Record<string, unknown> | undefined) || {};
-      const conversation = conversations.get(id);
-
-      if (!conversation) {
-        reply.code(404);
-        return err(404, 'Conversation not found');
-      }
+      const conversation = await ensureConversation(prisma, id, getUserId(request), body);
 
       const question = String(body.question || body.content || '').trim();
       if (!question) {
@@ -195,14 +228,13 @@ export const createAiConversationRoutes = (_prisma: PrismaClient): FastifyPlugin
         content: question,
       });
 
-      const aiPayload = {
-        question,
-        merchantId: body.merchantId || conversation.merchant_id || undefined,
-      };
       const aiResponse = await fastify.inject({
         method: 'POST',
         url: '/api/v1/ai/query',
-        payload: aiPayload,
+        payload: {
+          question,
+          merchantId: body.merchantId || conversation.merchant_id || undefined,
+        },
       });
 
       if (aiResponse.statusCode >= 400) {
@@ -225,23 +257,18 @@ export const createAiConversationRoutes = (_prisma: PrismaClient): FastifyPlugin
         metaJson: { records: aiBody.data.records || [] },
       });
 
-      appendMessages(id, userMessage, assistantMessage);
+      await appendMessages(prisma, userMessage, assistantMessage);
 
       return ok({
-        user_message: userMessage,
-        assistant_message: assistantMessage,
+        user_message: mapMessage({ ...userMessage, created_at: new Date() }),
+        assistant_message: mapMessage({ ...assistantMessage, created_at: new Date() }),
       });
     });
 
-    fastify.post('/ai/conversations/:id/file-notices', async (request, reply) => {
+    fastify.post('/ai/conversations/:id/file-notices', async (request) => {
       const { id } = request.params as { id: string };
       const body = (request.body as Record<string, unknown> | undefined) || {};
-      const conversation = conversations.get(id);
-
-      if (!conversation) {
-        reply.code(404);
-        return err(404, 'Conversation not found');
-      }
+      await ensureConversation(prisma, id, getUserId(request), body);
 
       const files = normalizeFiles(body).map((item) => ({
         file_id: String(item.file_id || ''),
@@ -266,7 +293,6 @@ export const createAiConversationRoutes = (_prisma: PrismaClient): FastifyPlugin
       }));
 
       if (files.length === 0) {
-        reply.code(400);
         return err(400, 'files are required');
       }
 
@@ -278,20 +304,14 @@ export const createAiConversationRoutes = (_prisma: PrismaClient): FastifyPlugin
         metaJson: { files },
       });
 
-      appendMessages(id, notice);
-
-      return ok(notice);
+      await appendMessages(prisma, notice);
+      return ok(mapMessage({ ...notice, created_at: new Date() }));
     });
 
     fastify.post('/ai/conversations/:id/reconcile', async (request, reply) => {
       const { id } = request.params as { id: string };
       const body = (request.body as Record<string, unknown> | undefined) || {};
-      const conversation = conversations.get(id);
-
-      if (!conversation) {
-        reply.code(404);
-        return err(404, 'Conversation not found');
-      }
+      await ensureConversation(prisma, id, getUserId(request), body);
 
       const reconcileResponse = await fastify.inject({
         method: 'POST',
@@ -323,28 +343,26 @@ export const createAiConversationRoutes = (_prisma: PrismaClient): FastifyPlugin
         },
       });
 
-      appendMessages(id, assistantMessage);
+      await appendMessages(prisma, assistantMessage);
 
       return ok({
         batch_id: reconcileBody.data.batch_id,
         batch_no: reconcileBody.data.batch_no,
         stats: reconcileBody.data.stats,
-        message: assistantMessage,
+        message: mapMessage({ ...assistantMessage, created_at: new Date() }),
       });
     });
 
     fastify.delete('/ai/conversations/:id', async (request, reply) => {
       const { id } = request.params as { id: string };
-      const conversation = conversations.get(id);
+      const conversation = await getConversation(prisma, id);
 
       if (!conversation) {
         reply.code(404);
         return err(404, 'Conversation not found');
       }
 
-      conversations.delete(id);
-      messages.delete(id);
-
+      await prisma.aiConversation.delete({ where: { id } });
       return ok({ deleted: true });
     });
   };
