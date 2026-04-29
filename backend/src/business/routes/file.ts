@@ -10,7 +10,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { FileProcessor, guessFileType } from '../services/file-processor.js';
 import { askAIForTemplateGeneration, analyzeHeaders, inferDelimiter } from '../services/template-ai.js';
 import { detectSource, getSupportedSources, type SourceKind } from '../../utils/source-detector.js';
-import { parseFileContent, parseExcelBuffer, isExcelFile } from '../../utils/file-parser.js';
+import { decodeTextBuffer, parseFileContent, parseExcelBuffer, isExcelFile } from '../../utils/file-parser.js';
 
 interface ApiResponse<T = unknown> {
   code: number;
@@ -193,7 +193,7 @@ export function createFileRoutes(processor: FileProcessor): FastifyPluginAsync {
             if (ext === 'xlsx' || ext === 'xls') {
               content = '';
             } else {
-              content = buffer.toString('utf-8');
+              content = decodeTextBuffer(buffer);
             }
           } else if (part.type === 'field') {
             if (part.fieldname === 'file_type' || part.fieldname === 'fileType') {
@@ -300,7 +300,7 @@ export function createFileRoutes(processor: FileProcessor): FastifyPluginAsync {
       }
 
       const ext = filename.toLowerCase().split('.').pop();
-      const content = ext === 'xlsx' || ext === 'xls' ? '' : buffer.toString('utf-8');
+      const content = ext === 'xlsx' || ext === 'xls' ? '' : decodeTextBuffer(buffer);
 
       let parsedData;
       try {
@@ -345,11 +345,11 @@ export function createFileRoutes(processor: FileProcessor): FastifyPluginAsync {
         typeof body.content === 'string'
           ? String(body.content)
           : Buffer.isBuffer(body.content)
-            ? body.content.toString('utf-8')
+            ? decodeTextBuffer(body.content)
             : Buffer.isBuffer(body.file)
-              ? body.file.toString('utf-8')
+              ? decodeTextBuffer(body.file)
               : Buffer.isBuffer(body.data)
-                ? body.data.toString('utf-8')
+                ? decodeTextBuffer(body.data)
                 : typeof body.file === 'string'
                   ? String(body.file)
                   : '';
@@ -519,7 +519,7 @@ export function createFileRoutes(processor: FileProcessor): FastifyPluginAsync {
           const parsed = parseExcelBuffer(buffer);
           headers = parsed.headers;
         } else {
-          content = buffer.toString('utf-8');
+          content = decodeTextBuffer(buffer);
           const parsed = parseFileContent(content, filename);
           headers = parsed.headers;
         }

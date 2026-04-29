@@ -8,6 +8,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { sanitize, isInjection } from '../../utils/prompt-sanitizer.js';
 import { ask, mockAsk } from '../../services/llm.js';
 import { guessFileType } from '../../services/file-processor.js';
+import { decodeTextBuffer } from '../../utils/file-parser.js';
 import {
   getDefaultTemplateByBatchType,
   getReconTemplate,
@@ -388,7 +389,7 @@ export const createAiFileRoutes = (processor: { processBuffer: (content: string,
       if (file) {
         filename = file.filename || 'uploaded.txt';
         const buffer = await file.toBuffer();
-        content = buffer.toString('utf-8');
+        content = decodeTextBuffer(buffer);
       } else {
         // 兼容 JSON body 方式
         const body = request.body as Record<string, unknown>;
@@ -491,7 +492,7 @@ export const createAiFileRoutes = (processor: { processBuffer: (content: string,
         if (part.type === 'file') {
           filename = part.filename || 'uploaded.txt';
           fileBuffer = await part.toBuffer();
-          content = fileBuffer.toString('utf-8');
+          content = decodeTextBuffer(fileBuffer);
         } else if (part.type === 'field') {
           if (part.fieldname === 'data_type' && typeof part.value === 'string') {
             dataType = part.value as 'business' | 'channel';
@@ -536,7 +537,7 @@ export const createAiFileRoutes = (processor: { processBuffer: (content: string,
           const filename = part.filename || 'unknown.dat';
           const buffer = await part.toBuffer();
           files.push({
-            content: buffer.toString('utf-8'),
+            content: decodeTextBuffer(buffer),
             filename,
             buffer,
           });

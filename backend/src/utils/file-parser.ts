@@ -135,6 +135,38 @@ export function isExcelFile(filename: string): boolean {
 }
 
 /**
+ * Decode text buffer with UTF-8 first, then fallback to GB18030 for common
+ * payment/billing CSV exports created on Windows.
+ */
+export function decodeTextBuffer(buffer: Buffer): string {
+  if (!buffer || buffer.length === 0) {
+    return '';
+  }
+
+  const utf8 = buffer.toString('utf-8');
+  const utf8Broken = countReplacementChars(utf8);
+  const utf8HasChinese = /[\u4e00-\u9fa5]/.test(utf8);
+
+  if (utf8Broken === 0 && utf8HasChinese) {
+    return stripBom(utf8);
+  }
+
+  try {
+    const gb18030 = new TextDecoder('gb18030').decode(buffer);
+    const gbBroken = countReplacementChars(gb18030);
+    const gbHasChinese = /[\u4e00-\u9fa5]/.test(gb18030);
+
+    if (gbHasChinese && (gbBroken < utf8Broken || !utf8HasChinese)) {
+      return stripBom(gb18030);
+    }
+  } catch {
+    // Ignore decode fallback errors and keep UTF-8 result.
+  }
+
+  return stripBom(utf8);
+}
+
+/**
  * 分割行（处理引号内的分隔符）
  */
 function splitLine(line: string, delimiter: string): string[] {
@@ -187,4 +219,13 @@ function parseCSVLine(line: string): string[] {
 
   result.push(current.trim());
   return result;
+}
+
+function countReplacementChars(text: string): number {
+  if (!text) return 0;
+  return (text.match(/\uFFFD/g) || []).length;
+}
+
+function stripBom(text: string): string {
+  return text.replace(/^\uFEFF/, '');
 }
