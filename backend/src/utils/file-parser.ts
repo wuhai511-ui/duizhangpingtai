@@ -120,8 +120,12 @@ export function parseExcelBuffer(buffer: Buffer): ParsedData {
     return { headers: [], rows: [] };
   }
 
-  const headers = data[0].map((header) => String(header || '').trim());
-  const rows = data.slice(1).map((row) => row.map((cell) => String(cell || '').trim()));
+  const headerIndex = detectHeaderRow(data);
+  const headers = data[headerIndex].map((header) => String(header || '').trim());
+  const rows = data
+    .slice(headerIndex + 1)
+    .map((row) => row.map((cell) => String(cell || '').trim()))
+    .filter((row) => row.some((cell) => cell !== ''));
 
   return { headers, rows };
 }
@@ -228,4 +232,42 @@ function countReplacementChars(text: string): number {
 
 function stripBom(text: string): string {
   return text.replace(/^\uFEFF/, '');
+}
+
+function detectHeaderRow(rows: string[][]): number {
+  const headerKeywords = [
+    '商户号',
+    '商户订单号',
+    '订单号',
+    '携程订单号',
+    '交易金额',
+    '订单金额',
+    '结算金额',
+    '交易日期',
+    '支付时间',
+    '结算日期',
+    '交易流水号',
+  ];
+
+  let bestIndex = 0;
+  let bestScore = -1;
+  const maxScan = Math.min(rows.length, 20);
+
+  for (let i = 0; i < maxScan; i++) {
+    const cells = (rows[i] || []).map((cell) => String(cell || '').trim()).filter(Boolean);
+    if (cells.length === 0) continue;
+
+    const keywordScore = cells.reduce((score, cell) => {
+      return score + (headerKeywords.some((keyword) => cell.includes(keyword)) ? 3 : 0);
+    }, 0);
+    const textScore = cells.filter((cell) => /[\u4e00-\u9fa5a-zA-Z]/.test(cell)).length;
+    const score = keywordScore + textScore;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = i;
+    }
+  }
+
+  return bestIndex;
 }

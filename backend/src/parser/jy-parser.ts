@@ -11,13 +11,23 @@ export class JyParser {
   private fieldMap: Record<string, string> = {
     '商户编号': 'merchant_no',
     '商户号': 'merchant_no',
+    '酒店编号': 'merchant_no',
+    '门店编号': 'merchant_no',
     '支付宝账号': 'merchant_no',
     '交易日期': 'trans_date',
+    '订单日期': 'trans_date',
+    '账单日期': 'trans_date',
+    '结算日期': 'trans_date',
+    '入住日期': 'trans_date',
+    '离店日期': 'trans_date',
     '交易时间': 'trans_time',
     '业务时间': 'transaction_time',
     '账务时间': 'transaction_time',
     '交易创建时间': 'transaction_time',
     '完成时间': 'transaction_time',
+    '下单时间': 'transaction_time',
+    '支付时间': 'transaction_time',
+    '成交时间': 'transaction_time',
     '终端号': 'terminal_no',
     '分支机构': 'branch_name',
     '网点名称': 'branch_name',
@@ -34,6 +44,8 @@ export class JyParser {
     '支付宝交易号': 'lakala_serial',
     '平台订单号': 'lakala_serial',
     '抖音支付单号': 'lakala_serial',
+    '渠道流水号': 'lakala_serial',
+    '携程流水号': 'lakala_serial',
     '原拉卡拉流水号': 'orig_lakala_serial',
     '原交易流水号': 'orig_lakala_serial',
     '微信退款单号': 'orig_lakala_serial',
@@ -46,27 +58,48 @@ export class JyParser {
     '银行名称': 'bank_name',
     '付款银行': 'bank_name',
     '交易金额(分)': 'amount',
+    '交易金额（分）': 'amount',
     '交易金额': 'amount',
     '订单金额': 'amount',
+    '订单金额(元)': 'amount',
     '订单金额（元）': 'amount',
+    '订单总额': 'amount',
+    '订单总金额': 'amount',
+    '应收金额': 'amount',
+    '实收金额': 'amount',
+    '支付金额': 'amount',
+    '客人支付金额': 'amount',
+    '携程应付金额': 'amount',
+    '携程结算金额': 'amount',
     '用户实付金额': 'amount',
     '收入金额': 'amount',
     '手续费(分)': 'fee',
+    '手续费（分）': 'fee',
     '手续费': 'fee',
     '服务费': 'fee',
+    '服务费(元)': 'fee',
     '服务费（元）': 'fee',
     '技术服务费': 'fee',
     '平台服务费': 'fee',
     '佣金': 'fee',
     '结算金额(分)': 'settle_amount',
+    '结算金额（分）': 'settle_amount',
     '结算金额': 'settle_amount',
     '应结订单金额': 'settle_amount',
     '入账金额': 'settle_amount',
+    '到账金额': 'settle_amount',
+    '净收入': 'settle_amount',
     '净额': 'settle_amount',
     '商户订单号': 'merchant_order_no',
     '商家订单号': 'merchant_order_no',
     '业务订单号': 'merchant_order_no',
     '美团订单号': 'merchant_order_no',
+    '订单号': 'merchant_order_no',
+    '携程订单号': 'merchant_order_no',
+    'OTA订单号': 'merchant_order_no',
+    'OTA/TMC订单号': 'merchant_order_no',
+    '渠道订单号': 'merchant_order_no',
+    '第三方订单号': 'merchant_order_no',
     '支付订单号': 'pay_order_no',
     '支付端订单号': 'pay_order_no',
     '商户退款单号': 'pay_order_no',
@@ -122,8 +155,9 @@ export class JyParser {
   }
 
   validate(record: Partial<JyTransaction>): boolean {
-    const required = ['merchant_no', 'trans_date', 'lakala_serial', 'amount', 'fee', 'settle_amount'];
-    return required.every((field) => record[field as keyof JyTransaction] !== undefined && record[field as keyof JyTransaction] !== '');
+    const matchKey = record.merchant_order_no || record.lakala_serial || record.pay_order_no || record.external_serial;
+    const hasAmount = record.amount !== undefined || record.settle_amount !== undefined;
+    return Boolean(matchKey && hasAmount);
   }
 
   private mapToRecord(
@@ -135,7 +169,7 @@ export class JyParser {
     const unitHints: Record<string, 'fen' | 'yuan' | undefined> = {};
 
     headers.forEach((header, index) => {
-      const normalizedHeader = this.cleanText(header);
+      const normalizedHeader = this.normalizeHeader(header);
       const fieldName = this.fieldMap[normalizedHeader];
       if (fieldName && values[index] !== undefined) {
         raw[fieldName] = this.cleanText(values[index]);
@@ -159,7 +193,16 @@ export class JyParser {
 
     const amount = this.parseAmount(raw.amount, unitHints.amount, forcedAmountUnit);
     const fee = this.parseAmount(raw.fee, unitHints.fee, forcedAmountUnit);
-    const settleAmount = this.parseAmount(raw.settle_amount, unitHints.settle_amount, forcedAmountUnit);
+    const settleAmountRaw = this.parseAmount(raw.settle_amount, unitHints.settle_amount, forcedAmountUnit);
+    const settleAmount = raw.settle_amount === undefined || raw.settle_amount === '' ? amount - fee : settleAmountRaw;
+    const merchantOrderNo = raw.merchant_order_no ? String(raw.merchant_order_no) : undefined;
+    const serialNo =
+      raw.lakala_serial ||
+      merchantOrderNo ||
+      raw.pay_order_no ||
+      raw.external_serial ||
+      raw.sys_ref_no ||
+      '';
 
     return {
       merchant_no: String(raw.merchant_no || ''),
@@ -168,7 +211,7 @@ export class JyParser {
       terminal_no: raw.terminal_no ? String(raw.terminal_no) : undefined,
       branch_name: raw.branch_name ? String(raw.branch_name) : undefined,
       trans_type: raw.trans_type ? String(raw.trans_type) : undefined,
-      lakala_serial: String(raw.lakala_serial || ''),
+      lakala_serial: String(serialNo),
       orig_lakala_serial: raw.orig_lakala_serial ? String(raw.orig_lakala_serial) : undefined,
       card_no: raw.card_no ? String(raw.card_no) : undefined,
       pay_channel: raw.pay_channel ? String(raw.pay_channel) : undefined,
@@ -176,7 +219,7 @@ export class JyParser {
       amount,
       fee,
       settle_amount: settleAmount,
-      merchant_order_no: raw.merchant_order_no ? String(raw.merchant_order_no) : undefined,
+      merchant_order_no: merchantOrderNo,
       pay_order_no: raw.pay_order_no ? String(raw.pay_order_no) : undefined,
       external_serial: raw.external_serial ? String(raw.external_serial) : undefined,
       sys_ref_no: raw.sys_ref_no ? String(raw.sys_ref_no) : undefined,
@@ -186,7 +229,11 @@ export class JyParser {
   }
 
   private cleanText(value: unknown): string {
-    return String(value || '').replace(/`/g, '').trim();
+    return String(value || '').replace(/`/g, '').replace(/^\uFEFF/, '').trim();
+  }
+
+  private normalizeHeader(value: unknown): string {
+    return this.cleanText(value).replace(/\s+/g, '');
   }
 
   private extractDate(value: string): string {
