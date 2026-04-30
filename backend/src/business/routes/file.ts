@@ -11,6 +11,7 @@ import { FileProcessor, guessFileType } from '../services/file-processor.js';
 import { askAIForTemplateGeneration, analyzeHeaders, inferDelimiter } from '../services/template-ai.js';
 import { detectSource, getSupportedSources, type SourceKind } from '../../utils/source-detector.js';
 import { decodeTextBuffer, parseFileContent, parseExcelBuffer, isExcelFile } from '../../utils/file-parser.js';
+import { BusinessOrderParser } from '../../parser/business-order-parser.js';
 
 interface ApiResponse<T = unknown> {
   code: number;
@@ -143,6 +144,15 @@ function mapRowsWithTemplate(
       };
     })
     .filter((record) => record.order_no && record.order_amount !== undefined);
+}
+
+function fallbackParseBusinessOrders(filename: string, buffer: Buffer, content: string): any[] {
+  const parser = new BusinessOrderParser();
+  const result = parser.parse(content, filename, buffer);
+  if (!result.success || !Array.isArray(result.records)) {
+    return [];
+  }
+  return result.records;
 }
 
 /** 浠庤姹備腑鎻愬彇 merchantId锛堟敮鎸?header銆乵ultipart field銆丣SON body锛?*/
@@ -313,7 +323,10 @@ export function createFileRoutes(processor: FileProcessor): FastifyPluginAsync {
       }
 
       const fieldConfig = JSON.parse(template.field_config || '{}');
-      const records = mapRowsWithTemplate(parsedData.headers || [], parsedData.rows || [], fieldConfig);
+      let records = mapRowsWithTemplate(parsedData.headers || [], parsedData.rows || [], fieldConfig);
+      if (records.length === 0) {
+        records = fallbackParseBusinessOrders(filename, buffer, content);
+      }
       const result = await processor.saveImportedBusinessOrders(
         filename,
         records,

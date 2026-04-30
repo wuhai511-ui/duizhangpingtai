@@ -130,6 +130,37 @@ function buildCompatAiMapping(generated: any, headers: string[]) {
   };
 }
 
+function normalizeHeader(value: unknown): string {
+  return String(value || '')
+    .trim()
+    .replace(/^\uFEFF/, '')
+    .replace(/\s+/g, '')
+    .toLowerCase();
+}
+
+function templateHasRequiredBusinessOrderFields(template: any, headers: string[]): boolean {
+  try {
+    const config = JSON.parse(template.field_config || '{}') as any;
+    const fields = Array.isArray(config?.fields) ? config.fields : [];
+    const normalizedHeaders = new Set(headers.map((header) => normalizeHeader(header)));
+
+    const hasOrderNo = fields.some(
+      (field: any) =>
+        String(field?.field || '') === 'order_no' &&
+        normalizedHeaders.has(normalizeHeader(field?.header)),
+    );
+    const hasOrderAmount = fields.some(
+      (field: any) =>
+        String(field?.field || '') === 'order_amount' &&
+        normalizedHeaders.has(normalizeHeader(field?.header)),
+    );
+
+    return hasOrderNo && hasOrderAmount;
+  } catch {
+    return false;
+  }
+}
+
 export const createTemplateRoutes = (prismaClient: PrismaClient): FastifyPluginAsync => {
   prisma = prismaClient;
   return templateRoutes;
@@ -246,7 +277,9 @@ export const templateRoutes: FastifyPluginAsync = async (fastify) => {
     };
 
     const matchedTemplate =
-      bestMatch && bestScore >= 0.5
+      bestMatch &&
+      bestScore >= 0.5 &&
+      templateHasRequiredBusinessOrderFields(bestMatch, headers)
         ? {
             ...bestMatch,
             field_config: JSON.parse(bestMatch.field_config || '{}'),
